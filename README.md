@@ -25,3 +25,9 @@
 [rtd-link]:                 https://cutout-fits.readthedocs.io/en/latest/?badge=latest
 
 <!-- prettier-ignore-end -->
+
+A package to produce cutouts of (remote) FITS files.
+
+## NOTICE
+
+This is currently a work-in-progress
