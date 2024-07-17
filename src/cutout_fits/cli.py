@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 
 from cutout_fits.cutout import make_cutout
+from cutout_fits.logging import logger, set_verbosity
 
 
 def main() -> None:
@@ -26,12 +27,20 @@ def main() -> None:
         default=None,
     )
     parser.add_argument(
+        "-o",
         "--overwrite",
         action="store_true",
         help="Overwrite output file if it exists",
     )
-
+    parser.add_argument(
+        "-v", "--verbosity", default=0, action="count", help="Increase output verbosity"
+    )
     args = parser.parse_args()
+
+    set_verbosity(
+        logger=logger,
+        verbosity=args.verbosity,
+    )
 
     _ = make_cutout(
         infile=args.infile,

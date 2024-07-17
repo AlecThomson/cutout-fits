@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import logging
 import os
 from typing import NamedTuple
 
@@ -13,13 +12,7 @@ from astropy.wcs import WCS
 from astropy.wcs.utils import skycoord_to_pixel
 from dotenv import load_dotenv
 
-logging.captureWarnings(True)
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-ch = logging.StreamHandler()
-ch.setLevel(logging.DEBUG)
-logger.addHandler(ch)
-
+from cutout_fits.logging import logger
 
 _ = load_dotenv()
 
