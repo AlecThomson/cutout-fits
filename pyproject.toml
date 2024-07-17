@@ -30,7 +30,11 @@ classifiers = [
   "Typing :: Typed",
 ]
 dynamic = ["version"]
-dependencies = []
+dependencies = [
+  "astropy",
+  "numpy",
+  "python-dotenv",
+]
 
 [project.optional-dependencies]
 test = [
