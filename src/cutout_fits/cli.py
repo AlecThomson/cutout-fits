@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
+
 from cutout_fits.cutout import make_cutout
 
 
 def main() -> None:
-    import argparse
-
     parser = argparse.ArgumentParser(description="Make a cutout of a FITS file")
     parser.add_argument("infile", help="Path to input FITS file - can be a remote URL")
     parser.add_argument("outfile", help="Path to output FITS file")
