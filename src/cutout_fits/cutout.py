@@ -25,20 +25,54 @@ _ = load_dotenv()
 
 
 class SpatialIndex(NamedTuple):
+    """
+    Start and end indices for spatial axes.
+
+    Attributes:
+        start_ra_index: int | None
+        end_ra_index: int | None
+        start_dec_index: int | None
+        end_dec_index: int | None
+    """
+
     start_ra_index: int | None
+    """Start index for RA axis"""
     end_ra_index: int | None
+    """End index for RA axis"""
     start_dec_index: int | None
+    """Start index for Dec axis"""
     end_dec_index: int | None
+    """End index for Dec axis"""
 
 
 class SpectralIndex(NamedTuple):
+    """
+    Start and end indices for spectral axes.
+
+    Attributes:
+        start_freq_index: int | None
+        end_freq_index: int | None
+    """
+
     start_freq_index: int | None
+    """Start index for frequency axis"""
     end_freq_index: int | None
+    """End index for frequency axis"""
 
 
 class StokesIndex(NamedTuple):
+    """
+    Start and end indices for Stokes axes.
+
+    Attributes:
+        start_stokes_index: int | None
+        end_stokes_index: int | None
+    """
+
     start_stokes_index: int | None
+    """Start index for Stokes axis"""
     end_stokes_index: int | None
+    """End index for Stokes axis"""
 
 
 def get_spatial_indices(
