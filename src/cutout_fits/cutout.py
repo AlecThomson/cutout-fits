@@ -145,6 +145,7 @@ def get_stokes_indices(wcs: WCS) -> StokesIndex:
     Returns:
         StokesIndex: start_stokes_index, end_stokes_index
     """
+    logger.debug("wcs: %s", wcs)
     return StokesIndex(
         start_stokes_index=None,
         end_stokes_index=None,
@@ -173,11 +174,11 @@ def make_slicer(
     array_ordering = tuple(wcs.wcs.ctype)[::-1]
 
     spatial_indices = get_spatial_indices(wcs, centre, radius)
-    logger.debug(f"Spatial indices: {spatial_indices}")
+    logger.debug("Spatial indices: %s", spatial_indices)
     spectral_indices = get_spectral_indices(wcs, start_freq, end_freq)
-    logger.debug(f"Spectral indices: {spectral_indices}")
+    logger.debug("Spectral indices: %s", spectral_indices)
     stokes_indices = get_stokes_indices(wcs)
-    logger.debug(f"Stokes indices: {stokes_indices}")
+    logger.debug("Stokes indices: %s", stokes_indices)
 
     # we only care about the spatial, spectral, and stokes axes
     slice_mapping = {
@@ -270,7 +271,7 @@ def make_cutout(
                 start_freq=freq_start_hz * u.Hz if freq_start_hz is not None else None,
                 end_freq=freq_end_hz * u.Hz if freq_end_hz is not None else None,
             )
-            logger.debug(f"Slicer: {slicer}")
+            logger.debug("Slicer: %s", slicer)
             cutout_data = hdu.section[slicer]
             # Make sure the header is updated to reflect the cutout
             cutout_header = update_header(header, slicer)
