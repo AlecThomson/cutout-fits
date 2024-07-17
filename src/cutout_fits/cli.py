@@ -4,7 +4,9 @@ from __future__ import annotations
 import argparse
 
 from cutout_fits.cutout import make_cutout
-from cutout_fits.logging import logger, set_verbosity
+from cutout_fits.logging import set_verbosity, setup_logger
+
+logger = setup_logger()
 
 
 def main() -> None:
