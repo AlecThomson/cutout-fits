@@ -11,7 +11,9 @@ from astropy.wcs import WCS
 from astropy.wcs.utils import skycoord_to_pixel
 from dotenv import load_dotenv
 
-from cutout_fits.logging import logger
+from cutout_fits.logging import setup_logger
+
+logger = setup_logger()
 
 _ = load_dotenv()
 

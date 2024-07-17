@@ -8,9 +8,7 @@ logging.captureWarnings(True)
 # https://gist.github.com/gwerbin/e9ab7a88fef03771ab0bf3a11cf921bc
 
 
-def setup_logger(
-    filename: str | None = None,
-) -> logging.Logger:
+def setup_logger() -> logging.Logger:
     """Setup a logger
 
     Args:
@@ -29,11 +27,6 @@ def setup_logger(
     ch = logging.StreamHandler()
     ch.setFormatter(formatter)
     logger.addHandler(ch)
-
-    if filename is not None:
-        fh = logging.FileHandler(filename)
-        fh.setFormatter(formatter)
-        logger.addHandler(fh)
 
     return logger
 
@@ -55,6 +48,3 @@ def set_verbosity(logger: logging.Logger, verbosity: int) -> None:
         level = logging.CRITICAL
 
     logger.setLevel(level)
-
-
-logger = setup_logger()
