@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
-from typing import Optional, Tuple, NamedTuple
-import logging
+from __future__ import annotations
 
-from astropy.io import fits
-from astropy.coordinates import SkyCoord
+import logging
+import os
+from typing import NamedTuple, Optional, Tuple
+
+import numpy as np
 from astropy import units as u
+from astropy.coordinates import SkyCoord
+from astropy.io import fits
 from astropy.wcs import WCS
 from astropy.wcs.utils import skycoord_to_pixel
 from dotenv import load_dotenv
-import numpy as np
-import os
 
 logging.captureWarnings(True)
 logger = logging.getLogger(__name__)
@@ -21,24 +23,28 @@ logger.addHandler(ch)
 
 _ = load_dotenv()
 
+
 class SpatialIndex(NamedTuple):
     start_ra_index: Optional[int]
     end_ra_index: Optional[int]
     start_dec_index: Optional[int]
     end_dec_index: Optional[int]
 
+
 class SpectralIndex(NamedTuple):
     start_freq_index: Optional[int]
     end_freq_index: Optional[int]
+
 
 class StokesIndex(NamedTuple):
     start_stokes_index: Optional[int]
     end_stokes_index: Optional[int]
 
+
 def get_spatial_indices(
-        wcs: WCS,
-        centre: SkyCoord,
-        radius: u.Quantity,
+    wcs: WCS,
+    centre: SkyCoord,
+    radius: u.Quantity,
 ) -> SpatialIndex:
     """Get the start and end indices for spatial axes
 
@@ -50,7 +56,9 @@ def get_spatial_indices(
     Returns:
         SpatialIndex: start_ra_index, end_ra_index, start_dec_index, end_dec_index
     """
-    assert wcs.has_celestial, "WCS does not have celestial coordinates - cannot make spatial cutout"
+    assert (
+        wcs.has_celestial
+    ), "WCS does not have celestial coordinates - cannot make spatial cutout"
 
     # Offset each corner by the radius in the diagonal direction
     # sqrt(2) is used to get the diagonal distance - i.e. a square cutout
@@ -89,10 +97,11 @@ def get_spatial_indices(
         end_dec_index=end_dec_index,
     )
 
+
 def get_spectral_indices(
-        wcs: WCS,
-        start_freq: Optional[u.Quantity] = None,
-        end_freq: Optional[u.Quantity] = None,
+    wcs: WCS,
+    start_freq: Optional[u.Quantity] = None,
+    end_freq: Optional[u.Quantity] = None,
 ) -> SpectralIndex:
     """Get the start and end indices for spectral axes
 
@@ -104,18 +113,27 @@ def get_spectral_indices(
     Returns:
         SpectralIndex: start_freq_index, end_freq_index
     """
-    assert wcs.has_spectral, "WCS does not have spectral coordinates - cannot make spectral cutout"
+    assert (
+        wcs.has_spectral
+    ), "WCS does not have spectral coordinates - cannot make spectral cutout"
     if wcs.wcs.specsys == "":
         logger.warning("No spectral system defined in WCS - assuming TOPOCENT")
         wcs.wcs.specsys = "TOPOCENT"
 
-    start_freq_index = wcs.spectral.world_to_array_index(start_freq) if start_freq is not None else None
-    end_freq_index = wcs.spectral.world_to_array_index(end_freq) if end_freq is not None else None
+    start_freq_index = (
+        wcs.spectral.world_to_array_index(start_freq)
+        if start_freq is not None
+        else None
+    )
+    end_freq_index = (
+        wcs.spectral.world_to_array_index(end_freq) if end_freq is not None else None
+    )
 
     return SpectralIndex(
         start_freq_index=start_freq_index,
         end_freq_index=end_freq_index,
     )
+
 
 def get_stokes_indices(wcs: WCS) -> StokesIndex:
     # TODO: Stokes selection
@@ -131,6 +149,7 @@ def get_stokes_indices(wcs: WCS) -> StokesIndex:
         start_stokes_index=None,
         end_stokes_index=None,
     )
+
 
 def make_slicer(
     wcs: WCS,
@@ -180,6 +199,7 @@ def make_slicer(
             continue
         slicer.append(slice_mapping[map_key])
     return tuple(slicer)
+
 
 def update_header(old_header: fits.Header, slicer: Tuple[slice]) -> fits.Header:
     new_header = old_header.copy()
@@ -234,7 +254,9 @@ def make_cutout(
         for hdu in hdul:
             # Only cutout primary and image HDUs
             # All other HDUs are passed through
-            if not isinstance(hdu, fits.PrimaryHDU) or not isinstance(hdu, fits.ImageHDU):
+            if not isinstance(hdu, fits.PrimaryHDU) or not isinstance(
+                hdu, fits.ImageHDU
+            ):
                 cutout_hdulist.append(hdu)
                 continue
 
@@ -258,6 +280,7 @@ def make_cutout(
 
 def main() -> None:
     pass
+
 
 if __name__ == "__main__":
     main()
