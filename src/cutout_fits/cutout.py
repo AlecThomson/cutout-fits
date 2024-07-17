@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import NamedTuple, Optional, Tuple
+from typing import NamedTuple
 
 import numpy as np
 from astropy import units as u
@@ -25,20 +25,20 @@ _ = load_dotenv()
 
 
 class SpatialIndex(NamedTuple):
-    start_ra_index: Optional[int]
-    end_ra_index: Optional[int]
-    start_dec_index: Optional[int]
-    end_dec_index: Optional[int]
+    start_ra_index: int | None
+    end_ra_index: int | None
+    start_dec_index: int | None
+    end_dec_index: int | None
 
 
 class SpectralIndex(NamedTuple):
-    start_freq_index: Optional[int]
-    end_freq_index: Optional[int]
+    start_freq_index: int | None
+    end_freq_index: int | None
 
 
 class StokesIndex(NamedTuple):
-    start_stokes_index: Optional[int]
-    end_stokes_index: Optional[int]
+    start_stokes_index: int | None
+    end_stokes_index: int | None
 
 
 def get_spatial_indices(
@@ -100,8 +100,8 @@ def get_spatial_indices(
 
 def get_spectral_indices(
     wcs: WCS,
-    start_freq: Optional[u.Quantity] = None,
-    end_freq: Optional[u.Quantity] = None,
+    start_freq: u.Quantity | None = None,
+    end_freq: u.Quantity | None = None,
 ) -> SpectralIndex:
     """Get the start and end indices for spectral axes
 
@@ -155,9 +155,9 @@ def make_slicer(
     wcs: WCS,
     centre: SkyCoord,
     radius: u.Quantity,
-    start_freq: Optional[u.Quantity] = None,
-    end_freq: Optional[u.Quantity] = None,
-) -> Tuple[slice, ...]:
+    start_freq: u.Quantity | None = None,
+    end_freq: u.Quantity | None = None,
+) -> tuple[slice, ...]:
     """Create a slicer for a given WCS, centre, radius, and frequency range
 
     Args:
@@ -201,7 +201,7 @@ def make_slicer(
     return tuple(slicer)
 
 
-def update_header(old_header: fits.Header, slicer: Tuple[slice, ...]) -> fits.Header:
+def update_header(old_header: fits.Header, slicer: tuple[slice, ...]) -> fits.Header:
     new_header = old_header.copy()
     # FITS ordering is reversed
     slicer_fits = slicer[::-1]
@@ -220,8 +220,8 @@ def make_cutout(
     ra_deg: float,
     dec_deg: float,
     radius_arcmin: float,
-    freq_start_hz: Optional[float] = None,
-    freq_end_hz: Optional[float] = None,
+    freq_start_hz: float | None = None,
+    freq_end_hz: float | None = None,
 ) -> fits.HDUList:
     """Make a cutout of a FITS file
 
