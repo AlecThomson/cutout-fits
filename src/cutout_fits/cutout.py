@@ -157,7 +157,7 @@ def make_slicer(
     radius: u.Quantity,
     start_freq: Optional[u.Quantity] = None,
     end_freq: Optional[u.Quantity] = None,
-) -> Tuple[slice]:
+) -> Tuple[slice,...]:
     """Create a slicer for a given WCS, centre, radius, and frequency range
 
     Args:
@@ -168,7 +168,7 @@ def make_slicer(
         end_freq (Optional[u.Quantity], optional): End frequnecy. Defaults to None.
 
     Returns:
-        Tuple[slice]: Tuple of slices for each axis - in numpy order
+        Tuple[slice,...]: Tuple of slices for each axis - in numpy order
     """
     array_ordering = tuple(wcs.wcs.ctype)[::-1]
 
@@ -201,7 +201,7 @@ def make_slicer(
     return tuple(slicer)
 
 
-def update_header(old_header: fits.Header, slicer: Tuple[slice]) -> fits.Header:
+def update_header(old_header: fits.Header, slicer: Tuple[slice,...]) -> fits.Header:
     new_header = old_header.copy()
     # FITS ordering is reversed
     slicer_fits = slicer[::-1]
@@ -265,7 +265,7 @@ def make_cutout(
             wcs = WCS(header)
             slicer = make_slicer(
                 wcs=wcs,
-                coord=SkyCoord(ra=ra_deg, dec=dec_deg, unit=u.deg),
+                centre=SkyCoord(ra=ra_deg, dec=dec_deg, unit=u.deg),
                 radius=radius_arcmin * u.arcmin,
                 start_freq=freq_start_hz * u.Hz if freq_start_hz is not None else None,
                 end_freq=freq_end_hz * u.Hz if freq_end_hz is not None else None,
