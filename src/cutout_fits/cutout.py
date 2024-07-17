@@ -157,7 +157,7 @@ def make_slicer(
     radius: u.Quantity,
     start_freq: Optional[u.Quantity] = None,
     end_freq: Optional[u.Quantity] = None,
-) -> Tuple[slice,...]:
+) -> Tuple[slice, ...]:
     """Create a slicer for a given WCS, centre, radius, and frequency range
 
     Args:
@@ -201,7 +201,7 @@ def make_slicer(
     return tuple(slicer)
 
 
-def update_header(old_header: fits.Header, slicer: Tuple[slice,...]) -> fits.Header:
+def update_header(old_header: fits.Header, slicer: Tuple[slice, ...]) -> fits.Header:
     new_header = old_header.copy()
     # FITS ordering is reversed
     slicer_fits = slicer[::-1]
