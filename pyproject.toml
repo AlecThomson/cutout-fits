@@ -62,7 +62,7 @@ Discussions = "https://github.com/AlecThomson/cutout-fits/discussions"
 Changelog = "https://github.com/AlecThomson/cutout-fits/releases"
 
 [project.scripts]
-cutout-fits = "cutout_fits.cli:main"
+cutout-fits = "cutout_fits.cutout:main"
 
 [tool.hatch]
 version.source = "vcs"
