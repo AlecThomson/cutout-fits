@@ -251,12 +251,14 @@ def update_header(old_header: fits.Header, slicer: tuple[slice, ...]) -> fits.He
 
 
 def make_cutout(
-    filepath: str,
+    infile: str,
+    outfile: str,
     ra_deg: float,
     dec_deg: float,
     radius_arcmin: float,
     freq_start_hz: float | None = None,
     freq_end_hz: float | None = None,
+    overwrite: bool = False,
 ) -> fits.HDUList:
     """Make a cutout of a FITS file
 
@@ -279,7 +281,7 @@ def make_cutout(
 
     cutout_hdulist = fits.HDUList()
     with fits.open(
-        filepath,
+        infile,
         fsspec_kwargs=fsspec_kwargs,
         use_fsspec=True,
         memmap=True,
@@ -289,9 +291,10 @@ def make_cutout(
         for hdu in hdul:
             # Only cutout primary and image HDUs
             # All other HDUs are passed through
-            if not isinstance(hdu, fits.PrimaryHDU) or not isinstance(
+            if not isinstance(hdu, fits.PrimaryHDU) and not isinstance(
                 hdu, fits.ImageHDU
             ):
+                logger.debug("Skipping HDU: %s", hdu)
                 cutout_hdulist.append(hdu)
                 continue
 
@@ -310,6 +313,10 @@ def make_cutout(
             # Make sure the header is updated to reflect the cutout
             cutout_header = update_header(header, slicer)
             cutout_hdulist.append(type(hdu)(cutout_data, cutout_header))
+
+        cutout_hdulist.writeto(outfile, overwrite=overwrite)
+
+    logger.info("Cutout saved to %s", outfile)
     return cutout_hdulist
 
 
@@ -342,15 +349,16 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    cutout_hdulist = make_cutout(
-        filepath=args.filepath,
+    _ = make_cutout(
+        infile=args.infile,
+        outfile=args.outfile,
         ra_deg=args.ra_deg,
         dec_deg=args.dec_deg,
         radius_arcmin=args.radius_arcmin,
         freq_start_hz=args.freq_start,
         freq_end_hz=args.freq_end,
+        overwrite=args.overwrite,
     )
-    cutout_hdulist.writeto(args.outfile, overwrite=args.overwrite)
 
 
 if __name__ == "__main__":
