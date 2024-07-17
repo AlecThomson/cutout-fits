@@ -51,6 +51,8 @@ def set_verbosity(logger: logging.Logger, verbosity: int) -> None:
         level = logging.INFO
     elif verbosity >= 2:
         level = logging.DEBUG
+    else:
+        level = logging.CRITICAL
 
     logger.setLevel(level)
 
