@@ -114,6 +114,17 @@ def get_spatial_indices(
     _x_left, _y_top = skycoord_to_pixel(top_left, wcs.celestial)
     _x_right, _y_bottom = skycoord_to_pixel(bottom_right, wcs.celestial)
 
+    # Check for NaNs - for left/bottom NaN -> 0, for right/top NaN -> image size
+    # This is needed when a stupidly big cutout is requested
+    x_left = 0 if np.isnan(x_left) else x_left
+    y_bottom = 0 if np.isnan(y_bottom) else y_bottom
+    x_right = wcs.celestial.pixel_shape[0] if np.isnan(x_right) else x_right
+    y_top = wcs.celestial.pixel_shape[1] if np.isnan(y_top) else y_top
+    _x_left = 0 if np.isnan(_x_left) else _x_left
+    _y_top = wcs.celestial.pixel_shape[1] if np.isnan(_y_top) else _y_top
+    _x_right = wcs.celestial.pixel_shape[0] if np.isnan(_x_right) else _x_right
+    _y_bottom = 0 if np.isnan(_y_bottom) else _y_bottom
+
     # Compare all points in case of insanity at the poles
     start_dec_index = int(np.floor(min(y_bottom, _y_bottom, y_top, _y_top)))
     end_dec_index = int(np.ceil(max(y_bottom, _y_bottom, y_top, _y_top)))
@@ -137,8 +148,8 @@ def get_spectral_indices(
 
     Args:
         wcs (WCS): WCS for HDU
-        start_freq (Optional[u.Quantity], optional): Starting frequency. Defaults to None.
-        end_freq (Optional[u.Quantity], optional): End frequency. Defaults to None.
+        start_freq (u.Quantify | None, optional): Starting frequency. Defaults to None.
+        end_freq (u.Quantify | None, optional): End frequency. Defaults to None.
 
     Returns:
         SpectralIndex: start_freq_index, end_freq_index
@@ -195,8 +206,8 @@ def make_slicer(
         wcs (WCS): WCS for HDU
         centre (SkyCoord): Centre of cutout
         radius (u.Quantity): Radius of cutout
-        start_freq (Optional[u.Quantity], optional): Starting frequency. Defaults to None.
-        end_freq (Optional[u.Quantity], optional): End frequnecy. Defaults to None.
+        start_freq (u.Quantity | None, optional): Starting frequency. Defaults to None.
+        end_freq (u.Quantity | None, optional): End frequnecy. Defaults to None.
 
     Returns:
         Tuple[slice,...]: Tuple of slices for each axis - in numpy order
@@ -263,8 +274,8 @@ def make_cutout(
         ra_deg (float): Centre RA in degrees
         dec_deg (float): Centre Dec in degrees
         radius_arcmin (float): Cutout radius in arcminutes
-        freq_start_hz (Optional[float], optional): Start frequency in Hz. Defaults to None.
-        freq_end_hz (Optional[float], optional): End frequency in Hz. Defaults to None.
+        freq_start_hz (float | None, optional): Start frequency in Hz. Defaults to None.
+        freq_end_hz (float | None, optional): End frequency in Hz. Defaults to None.
 
     Returns:
         fits.HDUList: Cutout HDUList
