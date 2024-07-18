@@ -54,7 +54,7 @@ class SampleData(NamedTuple):
 
 
 @pytest.fixture()
-def sample_data(tmpdir):
+def sample_data(tmpdir) -> np.Generator[SampleData, np.Any, None]:
     n_ra_pix = 128
     n_dec_pix = 128
     n_freq = 8
