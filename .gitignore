@@ -156,5 +156,5 @@ Thumbs.db
 # Common editor files
 *~
 *.swp
-scratch.ipynb
+*.ipynb
 *.fits
