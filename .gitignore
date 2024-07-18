@@ -158,3 +158,5 @@ Thumbs.db
 *.swp
 *.ipynb
 *.fits
+
+.idea
