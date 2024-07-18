@@ -5,6 +5,7 @@ import argparse
 import os
 from typing import NamedTuple
 
+import fsspec.core
 import numpy as np
 from astropy import units as u
 from astropy.coordinates import SkyCoord
@@ -270,21 +271,29 @@ def make_cutout(
     """Make a cutout of a FITS file
 
     Args:
-        filepath (str): Path to FITS file - can be a remote URL
+        infile (str): Path to FITS file - can be a remote URL
+        outfile (str): Path to output file - must be local
         ra_deg (float): Centre RA in degrees
         dec_deg (float): Centre Dec in degrees
         radius_arcmin (float): Cutout radius in arcminutes
         freq_start_hz (float | None, optional): Start frequency in Hz. Defaults to None.
         freq_end_hz (float | None, optional): End frequency in Hz. Defaults to None.
+        overwrite (bool): Whether to overwrite the output file.
 
     Returns:
         fits.HDUList: Cutout HDUList
     """
-    fsspec_kwargs = {
-        "key": os.getenv("FSSPEC_S3_KEY"),
-        "secret": os.getenv("FSSPEC_S3_SECRET"),
-        "endpoint_url": os.getenv("FSSPEC_S3_ENDPOINT_URL"),
-    }
+    fsspec_kwargs = {}
+    if infile.startswith("s3://"):
+        logger.info("Attempting to access S3 file...")
+        logger.info("Using S3 credentials...")
+        fsspec_kwargs["key"] = os.getenv("FSSPEC_S3_KEY")
+        fsspec_kwargs["secret"] = os.getenv("FSSPEC_S3_SECRET")
+        fsspec_kwargs["endpoint_url"] = os.getenv("FSSPEC_S3_ENDPOINT_URL")
+
+    elif infile.startswith(("https://", "http://")):
+        logger.info("Attempting to access HTTP(S) file...")
+        fsspec.core.DEFAULT_EXPAND = True
 
     cutout_hdulist = fits.HDUList()
     with fits.open(
