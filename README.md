@@ -1,6 +1,7 @@
 # cutout-fits
 
 [![Actions Status][actions-badge]][actions-link]
+[![Codecov Status][codecov-badge]][codecov-link]
 [![Documentation Status][rtd-badge]][rtd-link]
 
 [![PyPI version][pypi-version]][pypi-link]
@@ -14,6 +15,8 @@
 <!-- SPHINX-START -->
 
 <!-- prettier-ignore-start -->
+[codecov-link]:             https://codecov.io/gh/AlecThomson/cutout-fits
+[codecov-badge]:            https://codecov.io/gh/AlecThomson/cutout-fits/graph/badge.svg?token=7EARBRN20D
 [actions-badge]:            https://github.com/AlecThomson/cutout-fits/workflows/CI/badge.svg
 [actions-link]:             https://github.com/AlecThomson/cutout-fits/actions
 [conda-badge]:              https://img.shields.io/conda/vn/conda-forge/cutout-fits
