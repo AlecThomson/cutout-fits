@@ -245,6 +245,15 @@ def make_slicer(
 
 
 def get_cutout_shape(wcs: WCS, slicer: tuple[slice, ...]) -> tuple[int, ...]:
+    """Get the shape of a cutout
+
+    Args:
+        wcs (WCS): WCS of the cutout
+        slicer (tuple[slice, ...]): Slicer for the cutout
+
+    Returns:
+        tuple[int, ...]: Shape of the cutout
+    """
     shape = []
     for i, s in enumerate(slicer):
         logger.debug("slice: %s", s)
@@ -259,7 +268,31 @@ def get_cutout_shape(wcs: WCS, slicer: tuple[slice, ...]) -> tuple[int, ...]:
     return tuple(shape)[::-1]
 
 
+def format_shape(wcs: WCS, shape: tuple[int, ...]) -> str:
+    """Produce a string representation of the shape of an cube
+
+    Args:
+        wcs (WCS): Cube WCS
+        shape (tuple[int,...]): Shape of the cube
+
+    Returns:
+        str: String representation of the shape
+    """
+    crtypes = list(wcs.wcs.ctype)[::-1]
+    shape_dict = dict(zip(crtypes, shape))
+    return str(shape_dict)
+
+
 def update_header(old_header: fits.Header, slicer: tuple[slice, ...]) -> fits.Header:
+    """Update the header to reflect the cutout
+
+    Args:
+        old_header (fits.Header): Original header
+        slicer (tuple[slice, ...]): Slicer for the cutout
+
+    Returns:
+        fits.Header: Cutout header
+    """
     new_header = old_header.copy()
     # FITS ordering is reversed
     slicer_fits = slicer[::-1]
