@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import os
+from time import time
 from typing import NamedTuple
 
 import fsspec.core
@@ -244,7 +245,56 @@ def make_slicer(
     return tuple(slicer)
 
 
+def get_cutout_shape(wcs: WCS, slicer: tuple[slice, ...]) -> tuple[int, ...]:
+    """Get the shape of a cutout
+
+    Args:
+        wcs (WCS): WCS of the cutout
+        slicer (tuple[slice, ...]): Slicer for the cutout
+
+    Returns:
+        tuple[int, ...]: Shape of the cutout
+    """
+    shape = []
+    for i, s in enumerate(slicer):
+        logger.debug("slice: %s", s)
+        if s.start is None or s.stop is None:
+            shape.append(wcs.array_shape[i])
+            continue
+
+        start = max(s.start, 0)
+        stop = min(s.stop, wcs.array_shape[i])
+        shape.append(stop - start)
+
+    return tuple(shape)
+
+
+def format_shape(wcs: WCS, shape: tuple[int, ...]) -> str:
+    """Produce a string representation of the shape of an cube
+
+    Args:
+        wcs (WCS): Cube WCS
+        shape (tuple[int,...]): Shape of the cube
+
+    Returns:
+        str: String representation of the shape
+    """
+    crtypes = list(wcs.wcs.ctype)[::-1]
+    shape_int = [int(s) for s in shape]
+    shape_dict = dict(zip(crtypes, shape_int))
+    return str(shape_dict)
+
+
 def update_header(old_header: fits.Header, slicer: tuple[slice, ...]) -> fits.Header:
+    """Update the header to reflect the cutout
+
+    Args:
+        old_header (fits.Header): Original header
+        slicer (tuple[slice, ...]): Slicer for the cutout
+
+    Returns:
+        fits.Header: Cutout header
+    """
     new_header = old_header.copy()
     # FITS ordering is reversed
     slicer_fits = slicer[::-1]
@@ -324,15 +374,29 @@ def make_cutout(
                 start_freq=freq_start_hz * u.Hz if freq_start_hz is not None else None,
                 end_freq=freq_end_hz * u.Hz if freq_end_hz is not None else None,
             )
+
+            # Report info to user
             logger.debug("Slicer: %s", slicer)
+            logger.info("Producing cutout...")
+            orginal_shape_str = format_shape(wcs, wcs.array_shape)
+            logger.info("Original shape: %s", orginal_shape_str)
+            cutout_shape = get_cutout_shape(wcs, slicer)
+            cutout_shape_str = format_shape(wcs, cutout_shape)
+            logger.info("Cutout shape: %s", cutout_shape_str)
+
+            # Download will start here
+            tick = time()
             cutout_data = hdu.section[slicer]
+            tock = time()
+            logger.info("Cutout obtained! Took %.2f seconds", tock - tick)
             # Make sure the header is updated to reflect the cutout
+            logger.info("Updating header...")
             cutout_header = update_header(header, slicer)
             cutout_hdulist.append(type(hdu)(cutout_data, cutout_header))
 
+        logger.info("Writing cutout to %s", outfile)
         cutout_hdulist.writeto(outfile, overwrite=overwrite)
 
-    logger.info("Cutout saved to %s", outfile)
     return cutout_hdulist
 
 
