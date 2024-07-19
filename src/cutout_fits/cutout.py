@@ -244,6 +244,21 @@ def make_slicer(
     return tuple(slicer)
 
 
+def get_cutout_shape(wcs: WCS, slicer: tuple[slice, ...]) -> tuple[int, ...]:
+    shape = []
+    for i, s in enumerate(slicer):
+        logger.debug("slice: %s", s)
+        if s.start is None or s.stop is None:
+            shape.append(wcs.pixel_shape[i])
+            continue
+
+        start = max(s.start, 0)
+        stop = min(s.stop, wcs.pixel_shape[i])
+        shape.append(stop - start)
+
+    return tuple(shape)[::-1]
+
+
 def update_header(old_header: fits.Header, slicer: tuple[slice, ...]) -> fits.Header:
     new_header = old_header.copy()
     # FITS ordering is reversed
@@ -325,6 +340,7 @@ def make_cutout(
                 end_freq=freq_end_hz * u.Hz if freq_end_hz is not None else None,
             )
             logger.debug("Slicer: %s", slicer)
+            logger.info("Producing cutout...")
             cutout_data = hdu.section[slicer]
             # Make sure the header is updated to reflect the cutout
             cutout_header = update_header(header, slicer)

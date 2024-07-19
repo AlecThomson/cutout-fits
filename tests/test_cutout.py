@@ -177,3 +177,32 @@ def test_cutout_oversize(sample_data, center_coord, temp_dir_path):
         sample_data.n_dec_pix,
         sample_data.n_ra_pix,
     )
+
+
+def test_slicer_to_shape(sample_data, center_coord, temp_dir_path):
+    out_path = temp_dir_path / "temp.fits"
+    cut_hdul = cutout.make_cutout(
+        infile=sample_data.data_path.as_posix(),
+        outfile=out_path.as_posix(),
+        ra_deg=center_coord.ra.deg,
+        dec_deg=center_coord.dec.deg,
+        radius_arcmin=sample_data.fov,
+        overwrite=True,
+    )
+    out_path.unlink()
+    # assert cut_hdu.data.shape ==
+    assert cut_hdul is not None
+    # assert cut_hdul[0].data.shape == (
+    #     sample_data.n_time,
+    #     sample_data.n_pol,
+    #     sample_data.n_freq,
+    #     sample_data.n_dec_pix,
+    #     sample_data.n_ra_pix,
+    # )
+
+    wcs = WCS(cut_hdul[0].header)
+    slicer = cutout.make_slicer(wcs, center_coord, sample_data.fov)
+
+    test_shape = cutout.get_cutout_shape(wcs, slicer)
+
+    assert test_shape == cut_hdul[0].data.shape
