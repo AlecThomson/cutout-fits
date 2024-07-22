@@ -416,11 +416,13 @@ def make_cutout(
 
         for ext, hdu in enumerate(hdul):
             if hdu.name == "BEAMS":
+                logger.info("Found BEAMS ext! Cutting out beam table...")
                 needs_beamtable_ext = int(np.where(needs_beamtable)[0])
                 is_beamtable_ext = int(np.where(is_beamtable)[0])
                 assert (
                     is_beamtable_ext == ext
                 ), "Beam table extension is not where we think it is!"
+                logger.debug("Original BEAMS ext: \n%s", hdu.header.tostring(sep="\n"))
                 image_hdu = hdul[needs_beamtable_ext]
                 image_wcs = WCS(image_hdu.header)
                 cutout_beam_hdu = cutout_beamtable(
@@ -430,6 +432,9 @@ def make_cutout(
                     freq_end_hz=freq_end_hz,
                 )
                 cutout_hdulist.append(cutout_beam_hdu)
+                logger.debug(
+                    "Cutout BEAMS ext: \n%s", cutout_beam_hdu.header.tostring(sep="\n")
+                )
                 continue
 
             # Only cutout primary and image HDUs
@@ -437,7 +442,7 @@ def make_cutout(
             if not isinstance(hdu, fits.PrimaryHDU) and not isinstance(
                 hdu, fits.ImageHDU
             ):
-                logger.debug("Skipping HDU: %s", hdu)
+                logger.debug("Skipping cutting HDU: %s", hdu)
                 cutout_hdulist.append(hdu)
                 continue
 
