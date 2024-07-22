@@ -32,7 +32,7 @@
 <!-- prettier-ignore-end -->
 
 A utility to produce cutouts of FITS images using `astropy`. Remotely-hosted
-FITS images a fully supported using `ffspec` and `s3fs`.
+FITS images are fully supported using `ffspec` and `s3fs`.
 
 ## Installation
 
