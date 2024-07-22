@@ -11,6 +11,7 @@ import numpy as np
 from astropy import units as u
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
+from astropy.table import Table
 from astropy.wcs import WCS
 from astropy.wcs.utils import skycoord_to_pixel
 from dotenv import load_dotenv
@@ -308,6 +309,40 @@ def update_header(old_header: fits.Header, slicer: tuple[slice, ...]) -> fits.He
     return new_header
 
 
+def cutout_beamtable(
+    hdu: fits.BinTableHDU,
+    image_wcs: WCS,
+    freq_start_hz: float | None = None,
+    freq_end_hz: float | None = None,
+) -> fits.BinTableHDU:
+    """Cut out a beam table
+
+    Args:
+        hdu (fits.BinTableHDU): HDU with the beam table
+        image_wcs (WCS): WCS of the image that needs beams
+        freq_start_hz (float | None, optional): Starting frequency cut in Hz. Defaults to None.
+        freq_end_hz (float | None, optional): End frequnecy cut in Hz. Defaults to None.
+
+    Returns:
+        fits.BinTableHDU: Cutout beam table
+    """
+    spectral_indices = get_spectral_indices(
+        wcs=image_wcs,
+        start_freq=freq_start_hz * u.Hz if freq_start_hz is not None else None,
+        end_freq=freq_end_hz * u.Hz if freq_end_hz is not None else None,
+    )
+    beam_table = Table.read(hdu)
+    beam_slicer = slice(
+        spectral_indices.start_freq_index, spectral_indices.end_freq_index
+    )
+    beam_table_cut = beam_table[beam_slicer]
+    beam_table_cut["CHAN"] = np.arange(len(beam_table_cut))
+    cut_hdu = fits.BinTableHDU(beam_table_cut, name="BEAMS")
+    cut_hdu.header["NCHAN"] = len(beam_table_cut)
+
+    return cut_hdu
+
+
 def make_cutout(
     infile: str,
     outfile: str,
@@ -354,7 +389,49 @@ def make_cutout(
         mode="denywrite",
         output_verify="silentfix",
     ) as hdul:
-        for hdu in hdul:
+        # First check if beams tables are reported
+        needs_beamtable = np.zeros(len(hdul), dtype=bool)
+        is_beamtable = np.zeros(len(hdul), dtype=bool)
+        for ext, hdu in enumerate(hdul):
+            if hdu.header.get("CASAMBM", False):
+                needs_beamtable[ext] = True
+            if hdu.name == "BEAMS":
+                is_beamtable[ext] = True
+
+        # Sanity checks
+        # - If beams are reported, there must be a beam table
+        # - If there is a beam table, beams must be reported
+        # - We only support one beam table
+        if np.any(needs_beamtable) and not np.any(is_beamtable):
+            msg = "Beam table required in header, but no beam table extension found!"
+            raise ValueError(msg)
+        if np.any(is_beamtable) and not np.any(needs_beamtable):
+            msg = (
+                "Beam table extension found, but no beam table required in any header!"
+            )
+            raise ValueError(msg)
+        if np.sum(is_beamtable) > 1 or np.sum(needs_beamtable) > 1:
+            msg = "Multiple beam tables found! We cannot figure out which one to use!"
+            raise ValueError(msg)
+
+        for ext, hdu in enumerate(hdul):
+            if hdu.name == "BEAMS":
+                needs_beamtable_ext = int(np.where(needs_beamtable)[0])
+                is_beamtable_ext = int(np.where(is_beamtable)[0])
+                assert (
+                    is_beamtable_ext == ext
+                ), "Beam table extension is not where we think it is!"
+                image_hdu = hdul[needs_beamtable_ext]
+                image_wcs = WCS(image_hdu.header)
+                cutout_beam_hdu = cutout_beamtable(
+                    hdu=hdu,
+                    image_wcs=image_wcs,
+                    freq_start_hz=freq_start_hz,
+                    freq_end_hz=freq_end_hz,
+                )
+                cutout_hdulist.append(cutout_beam_hdu)
+                continue
+
             # Only cutout primary and image HDUs
             # All other HDUs are passed through
             if not isinstance(hdu, fits.PrimaryHDU) and not isinstance(
