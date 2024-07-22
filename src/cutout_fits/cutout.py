@@ -423,7 +423,7 @@ def make_cutout(
                     is_beamtable_ext == ext
                 ), "Beam table extension is not where we think it is!"
                 logger.debug("Original BEAMS ext: \n%s", hdu.header.tostring(sep="\n"))
-                image_hdu = hdul[needs_beamtable_ext]
+                image_hdu: fits.PrimaryHDU | fits.ImageHDU = hdul[needs_beamtable_ext]
                 image_wcs = WCS(image_hdu.header)  # pylint: disable=no-member
                 cutout_beam_hdu = cutout_beamtable(
                     hdu=hdu,
