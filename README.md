@@ -50,6 +50,8 @@ pip install git+https://github.com/AlecThomson/cutout-fits.git
 
 ## Usage
 
+### Universal cutouts
+
 The command-line tool can be invoked using `cutout-fits` entry point. Currently,
 spatial cutouts are specified using a centre right ascension and declination
 along with a cutout radius. Spectral cutouts are specified with a start and end
@@ -80,6 +82,61 @@ options:
   -o, --overwrite       Overwrite output file if it exists
   -v, --verbosity       Increase output verbosity
 ```
+
+### CASDA Access
+
+Cutouts from the CSIRO ASKAP Science Data Archive
+([CASDA](https://research.csiro.au/casda/)) can be made by invoking the
+`cutout-casda` entry point. The same set of cutout arguments as `cutout-fits`
+are supported
+
+```
+$ cutout-casda -h
+usage: cutout-casda [-h] [--output OUTPUT] [--freq-start FREQ_START] [--freq-end FREQ_END] [-v] [--username USERNAME] [--store-password] [--reenter-password]
+                    filename [filename ...] ra_deg dec_deg radius_arcmin
+
+Make a cutout of a FITS file on CASDA
+
+positional arguments:
+  filename              FITS file name(s)
+  ra_deg                Centre RA in degrees
+  dec_deg               Centre Dec in degrees
+  radius_arcmin         Cutout radius in arcminutes
+
+options:
+  -h, --help            show this help message and exit
+  --output OUTPUT       Directory to save FITS cutouts
+  --freq-start FREQ_START
+                        Start frequency in Hz
+  --freq-end FREQ_END   End frequency in Hz
+  -v, --verbosity       Increase output verbosity
+  --username USERNAME   CASDA username
+  --store-password      Store password in keyring
+  --reenter-password    Re-enter password
+```
+
+The
+[CASDA Astroquery API](https://astroquery.readthedocs.io/en/latest/casda/casda.html)
+requires an [OPAL](https://opal.atnf.csiro.au/) username and password to login.
+You can supply your username via the CLI or as the `CASDA_USERNAME` environment
+variable. Astroquery supports caching your password, which you will need if
+running non-interactively. To cache your password you can interactively run the
+helper script `casda-login`:
+
+```
+$ casda-login -h
+usage: casda-login [-h] username
+
+Login to CASDA and save credentials
+
+positional arguments:
+  username    Username for CASDA
+
+options:
+  -h, --help  show this help message and exit
+```
+
+### Python API
 
 Further API documentation is provided on [read the docs][rtd-link].
 

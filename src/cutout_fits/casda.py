@@ -5,7 +5,6 @@ import asyncio
 import os
 from pathlib import Path
 
-import pandas as pd
 from astropy.io import fits
 from astropy.table import Table
 from astroquery.casda import Casda
@@ -16,7 +15,18 @@ from cutout_fits import make_cutout
 from cutout_fits.logger import logger, set_verbosity
 
 
-async def get_staging_url(file_name: str) -> pd.DataFrame:
+async def get_staging_url(file_name: str) -> Table:
+    """Get the staging URL for a file on CASDA.
+
+    Args:
+        file_name (str): File name to search for
+
+    Raises:
+        ValueError: If no results are found
+
+    Returns:
+        Table: Table of results
+    """
     tap = TapPlus(url="https://casda.csiro.au/casda_vo_tools/tap")
     query_str = f"SELECT access_url, filename FROM ivoa.obscore WHERE filename='{file_name}' AND dataproduct_type='cube'"
     logger.info(f"Querying CASDA for {file_name}")
@@ -32,6 +42,19 @@ async def get_staging_url(file_name: str) -> pd.DataFrame:
 
 
 async def get_download_url(result_table: Table, casda: CasdaClass) -> str:
+    """Get the download URL for a file on CASDA.
+
+    Args:
+        result_table (Table): Table of results
+        casda (CasdaClass): CASDA class
+
+    Raises:
+        ValueError: If no results are found
+        ValueError: If multiple results are found
+
+    Returns:
+        str: Download URL
+    """
     assert len(result_table) == 1, "Multiple files found!"
     logger.info("Staging data on CASDA...")
     url_list: list[str] = await asyncio.to_thread(casda.stage_data, result_table)
@@ -68,7 +91,7 @@ def casda_login(
         reenter_password (bool, optional): Asks for the password even if it is already stored in the keyring. This is the way to overwrite an already stored passwork on the keyring. Defaults to False.
 
     Returns:
-        CasdaClass: _description_
+        CasdaClass: CASDA class
     """
     casda: CasdaClass = Casda()
     if username is None:
@@ -95,7 +118,22 @@ async def cutout_from_casda(
     freq_start_hz: float | None = None,
     freq_end_hz: float | None = None,
 ) -> fits.HDUList:
-    result_table: pd.DataFrame = await get_staging_url(file_name)
+    """Stage a file on CASDA and make a cutout.
+
+    Args:
+        casda (CasdaClass): CASDA class
+        file_name (str): File name to search for
+        ra_deg (float): Centre RA in degrees
+        dec_deg (float): Centre Dec in degrees
+        radius_arcmin (float): Cutout radius in arcminutes
+        output_dir (Path): Directory to save FITS cutouts
+        freq_start_hz (float | None, optional): Starting frequency in Hz. Defaults to None.
+        freq_end_hz (float | None, optional): Stopping frequency in Hz. Defaults to None.
+
+    Returns:
+        fits.HDUList: FITS HDU list
+    """
+    result_table: Table = await get_staging_url(file_name)
     url = await get_download_url(result_table, casda)
     outfile = output_dir / file_name.replace(".fits", ".cutout.fits")
     return await asyncio.to_thread(
@@ -123,6 +161,23 @@ async def get_cutouts_from_casda(
     store_password: bool = False,
     reenter_password: bool = False,
 ) -> list[fits.HDUList]:
+    """Get cutouts from CASDA.
+
+    Args:
+        file_name_list (list[str]): File name(s) to search for
+        ra_deg (float): Centre RA in degrees
+        dec_deg (float): Centre Dec in degrees
+        radius_arcmin (float): Cutout radius in arcminutes
+        output_dir (Path | None, optional): Output directory. Defaults to None.
+        username (str | None, optional): CASDA username. Defaults to None.
+        freq_start_hz (float | None, optional): Starting frequency in Hz. Defaults to None.
+        freq_end_hz (float | None, optional): Stopping frequnecy in Hz. Defaults to None.
+        store_password (bool, optional): Store CASDA password. Defaults to False.
+        reenter_password (bool, optional): Force CASDA password prompt. Defaults to False.
+
+    Returns:
+        list[fits.HDUList]: List of FITS HDU lists
+    """
     casda = casda_login(
         username=username,
         store_password=store_password,
@@ -150,6 +205,7 @@ async def get_cutouts_from_casda(
 
 
 def main() -> None:
+    """CLI"""
     parser = argparse.ArgumentParser(
         description="Make a cutout of a FITS file on CASDA"
     )

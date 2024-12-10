@@ -15,7 +15,7 @@ from astropy.io import fits
 from astropy.wcs import WCS
 
 from cutout_fits import cutout
-from cutout_fits.cutout import logger
+from cutout_fits.logger import logger
 
 
 def get_packaged_resource_path(package: str, filename: str) -> Path:
