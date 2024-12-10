@@ -11,7 +11,7 @@ from astroquery.casda import Casda
 from astroquery.casda.core import CasdaClass
 from astroquery.utils.tap.core import TapPlus
 
-from cutout_fits import make_cutout
+from cutout_fits.cutout import get_cutout_parser, make_cutout
 from cutout_fits.logger import logger, set_verbosity
 
 
@@ -208,33 +208,12 @@ async def get_cutouts_from_casda(
     return await asyncio.gather(*tasks)
 
 
-def main() -> None:
-    """CLI"""
-    parser = argparse.ArgumentParser(
-        description="Make a cutout of a FITS file on CASDA"
+def get_casda_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
+    casda_parser = argparse.ArgumentParser(
+        description="Make a cutout of a FITS file on CASDA", add_help=not parent_parser
     )
+    parser = casda_parser.add_argument_group("CASDA options")
     parser.add_argument("filename", nargs="+", help="FITS file name(s)")
-    parser.add_argument("ra_deg", type=float, help="Centre RA in degrees")
-    parser.add_argument("dec_deg", type=float, help="Centre Dec in degrees")
-    parser.add_argument("radius_arcmin", type=float, help="Cutout radius in arcminutes")
-    parser.add_argument(
-        "--output", help="Directory to save FITS cutouts", type=Path, default=None
-    )
-    parser.add_argument(
-        "--freq-start",
-        type=float,
-        help="Start frequency in Hz",
-        default=None,
-    )
-    parser.add_argument(
-        "--freq-end",
-        type=float,
-        help="End frequency in Hz",
-        default=None,
-    )
-    parser.add_argument(
-        "-v", "--verbosity", default=0, action="count", help="Increase output verbosity"
-    )
     parser.add_argument(
         "--username",
         help="CASDA username",
@@ -250,6 +229,21 @@ def main() -> None:
         help="Re-enter password",
         action="store_true",
     )
+    parser.add_argument(
+        "-v", "--verbosity", default=0, action="count", help="Increase output verbosity"
+    )
+    return casda_parser
+
+
+def main() -> None:
+    """CLI"""
+    cutout_parser = get_cutout_parser(parent_parser=True)
+    casda_parser = get_casda_parser(parent_parser=True)
+    parser = argparse.ArgumentParser(
+        description=casda_parser.description,
+        parents=[cutout_parser, casda_parser],
+    )
+
     args = parser.parse_args()
 
     set_verbosity(

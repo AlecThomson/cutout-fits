@@ -480,10 +480,30 @@ def make_cutout(
     return cutout_hdulist
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Make a cutout of a FITS file")
+def get_file_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
+    cutout_parser = argparse.ArgumentParser(
+        description="Make a cutout of a FITS file", add_help=not parent_parser
+    )
+    parser = cutout_parser.add_argument_group("File options")
     parser.add_argument("infile", help="Path to input FITS file - can be a remote URL")
     parser.add_argument("outfile", help="Path to output FITS file")
+    parser.add_argument(
+        "-o",
+        "--overwrite",
+        action="store_true",
+        help="Overwrite output file if it exists",
+    )
+    parser.add_argument(
+        "-v", "--verbosity", default=0, action="count", help="Increase output verbosity"
+    )
+    return cutout_parser
+
+
+def get_cutout_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
+    cutout_parser = argparse.ArgumentParser(
+        description="Make a cutout of a FITS file", add_help=not parent_parser
+    )
+    parser = cutout_parser.add_argument_group("Cutout options")
     parser.add_argument("ra_deg", type=float, help="Centre RA in degrees")
     parser.add_argument("dec_deg", type=float, help="Centre Dec in degrees")
     parser.add_argument("radius_arcmin", type=float, help="Cutout radius in arcminutes")
@@ -499,14 +519,15 @@ def main() -> None:
         help="End frequency in Hz",
         default=None,
     )
-    parser.add_argument(
-        "-o",
-        "--overwrite",
-        action="store_true",
-        help="Overwrite output file if it exists",
-    )
-    parser.add_argument(
-        "-v", "--verbosity", default=0, action="count", help="Increase output verbosity"
+    return cutout_parser
+
+
+def main() -> None:
+    file_parser = get_file_parser(parent_parser=True)
+    cutout_parser = get_cutout_parser(parent_parser=True)
+    parser = argparse.ArgumentParser(
+        parents=[file_parser, cutout_parser],
+        description=cutout_parser.description,
     )
     args = parser.parse_args()
 
