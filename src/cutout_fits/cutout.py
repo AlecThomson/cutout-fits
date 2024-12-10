@@ -16,9 +16,7 @@ from astropy.wcs import WCS
 from astropy.wcs.utils import skycoord_to_pixel
 from dotenv import load_dotenv
 
-from cutout_fits.logging import set_verbosity, setup_logger
-
-logger = setup_logger()
+from cutout_fits.logger import logger, set_verbosity
 
 _ = load_dotenv()
 
@@ -513,7 +511,6 @@ def main() -> None:
     args = parser.parse_args()
 
     set_verbosity(
-        logger=logger,
         verbosity=args.verbosity,
     )
 
