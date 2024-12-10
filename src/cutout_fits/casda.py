@@ -215,6 +215,12 @@ def get_casda_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
     parser = casda_parser.add_argument_group("CASDA options")
     parser.add_argument("filename", nargs="+", help="FITS file name(s)")
     parser.add_argument(
+        "--output",
+        help="Output directory",
+        default=None,
+        type=Path,
+    )
+    parser.add_argument(
         "--username",
         help="CASDA username",
         default=None,
