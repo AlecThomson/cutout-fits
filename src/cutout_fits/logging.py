@@ -1,5 +1,8 @@
+"""Logging utilities for fitscube."""
+
 from __future__ import annotations
 
+import io
 import logging
 
 logging.captureWarnings(True)
@@ -7,32 +10,39 @@ logging.captureWarnings(True)
 # Following guide from gwerbin/multiprocessing_logging.py
 # https://gist.github.com/gwerbin/e9ab7a88fef03771ab0bf3a11cf921bc
 
+formatter = logging.Formatter(
+    fmt="[%(threadName)s] %(asctime)s.%(msecs)03d %(levelname)s %(module)s - %(funcName)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
 
-def setup_logger() -> logging.Logger:
-    """Setup a logger
 
-    Args:
-        filename (Optional[str], optional): Output log file. Defaults to None.
-
-    Returns:
-        logging.Logger: The logger
+# pylint: disable=W0621
+class TqdmToLogger(io.StringIO):
     """
-    logger = logging.getLogger("cutout_fits")
-    logger.setLevel(logging.WARNING)
-    formatter = logging.Formatter(
-        fmt="[%(threadName)s] %(asctime)s.%(msecs)03d %(levelname)s %(module)s - %(funcName)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    Output stream for TQDM which will output to logger module instead of
+    the StdOut.
+    """
 
-    ch = logging.StreamHandler()
-    ch.setFormatter(formatter)
-    logger.addHandler(ch)
+    logger = None
+    level = None
+    buf = ""
 
-    return logger
+    def __init__(self, logger: logging.Logger | None, level: int | None = None) -> None:
+        super().__init__()
+        self.logger = logger
+        self.level = level or logging.INFO
+
+    def write(self, buf: str) -> int:
+        self.buf = buf.strip("\r\n\t ")
+        return len(buf)
+
+    def flush(self) -> None:
+        if self.logger is not None and isinstance(self.level, int):
+            self.logger.log(self.level, self.buf)
 
 
-def set_verbosity(logger: logging.Logger, verbosity: int) -> None:
-    """Set the logger verbosity
+def set_verbosity(verbosity: int) -> None:
+    """Set the logger verbosity.
 
     Args:
         logger (logging.Logger): The logger
@@ -47,4 +57,16 @@ def set_verbosity(logger: logging.Logger, verbosity: int) -> None:
     else:
         level = logging.CRITICAL
 
-    logger.setLevel(level)
+    logging.getLogger().setLevel(level)
+    ch = logging.StreamHandler()
+    ch.setFormatter(formatter)
+    ch.setLevel(level)
+    logging.getLogger().addHandler(ch)
+
+
+logger = logging.getLogger("cutout_fits")
+
+ch = logging.StreamHandler()
+ch.setFormatter(formatter)
+ch.setLevel(logging.WARNING)
+logger.addHandler(ch)
