@@ -63,24 +63,26 @@ simply included in the output file.
 
 ```
 $ cutout-fits -h
-usage: cutout-fits [-h] [--freq-start FREQ_START] [--freq-end FREQ_END] [-o] [-v] infile outfile ra_deg dec_deg radius_arcmin
+usage: cutout-fits [-h] [-o] [-v] [--freq-start FREQ_START] [--freq-end FREQ_END] infile outfile ra_deg dec_deg radius_arcmin
 
 Make a cutout of a FITS file
 
-positional arguments:
+options:
+  -h, --help            show this help message and exit
+
+File options:
   infile                Path to input FITS file - can be a remote URL
   outfile               Path to output FITS file
+  -o, --overwrite       Overwrite output file if it exists
+  -v, --verbosity       Increase output verbosity
+
+Cutout options:
   ra_deg                Centre RA in degrees
   dec_deg               Centre Dec in degrees
   radius_arcmin         Cutout radius in arcminutes
-
-options:
-  -h, --help            show this help message and exit
   --freq-start FREQ_START
                         Start frequency in Hz
   --freq-end FREQ_END   End frequency in Hz
-  -o, --overwrite       Overwrite output file if it exists
-  -v, --verbosity       Increase output verbosity
 ```
 
 ### CASDA Access
@@ -92,27 +94,28 @@ are supported
 
 ```
 $ cutout-casda -h
-usage: cutout-casda [-h] [--output OUTPUT] [--freq-start FREQ_START] [--freq-end FREQ_END] [-v] [--username USERNAME] [--store-password] [--reenter-password]
-                    filename [filename ...] ra_deg dec_deg radius_arcmin
+usage: cutout-casda [-h] [--freq-start FREQ_START] [--freq-end FREQ_END] [--username USERNAME] [--store-password] [--reenter-password] [-v]
+                    ra_deg dec_deg radius_arcmin filename [filename ...]
 
 Make a cutout of a FITS file on CASDA
 
-positional arguments:
-  filename              FITS file name(s)
+options:
+  -h, --help            show this help message and exit
+
+Cutout options:
   ra_deg                Centre RA in degrees
   dec_deg               Centre Dec in degrees
   radius_arcmin         Cutout radius in arcminutes
-
-options:
-  -h, --help            show this help message and exit
-  --output OUTPUT       Directory to save FITS cutouts
   --freq-start FREQ_START
                         Start frequency in Hz
   --freq-end FREQ_END   End frequency in Hz
-  -v, --verbosity       Increase output verbosity
+
+CASDA options:
+  filename              FITS file name(s)
   --username USERNAME   CASDA username
   --store-password      Store password in keyring
   --reenter-password    Re-enter password
+  -v, --verbosity       Increase output verbosity
 ```
 
 The
