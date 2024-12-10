@@ -29,12 +29,16 @@ async def get_staging_url(file_name: str) -> Table:
     """
     tap = TapPlus(url="https://casda.csiro.au/casda_vo_tools/tap")
     query_str = f"SELECT access_url, filename FROM ivoa.obscore WHERE filename='{file_name}' AND dataproduct_type='cube'"
-    logger.info(f"Querying CASDA for {file_name}")
-    logger.debug(f"Query: {query_str}")
+    msg = f"Querying CASDA for {file_name}"
+    logger.info(msg)
+    msg = f"Query: {query_str}"
+    logger.debug(msg)
     job = await asyncio.to_thread(tap.launch_job_async, query_str)
     results = job.get_results()
 
     if results is None:
+        msg = f"Query was {query_str}"
+        logger.error(msg)
         msg = "No results found!"
         raise ValueError(msg)
 
