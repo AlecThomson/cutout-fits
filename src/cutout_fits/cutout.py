@@ -87,9 +87,9 @@ def get_spatial_indices(
     Returns:
         SpatialIndex: start_ra_index, end_ra_index, start_dec_index, end_dec_index
     """
-    assert (
-        wcs.has_celestial
-    ), "WCS does not have celestial coordinates - cannot make spatial cutout"
+    assert wcs.has_celestial, (
+        "WCS does not have celestial coordinates - cannot make spatial cutout"
+    )
 
     # Offset each corner by the radius in the diagonal direction
     # sqrt(2) is used to get the diagonal distance - i.e. a square cutout
@@ -155,9 +155,9 @@ def get_spectral_indices(
     Returns:
         SpectralIndex: start_freq_index, end_freq_index
     """
-    assert (
-        wcs.has_spectral
-    ), "WCS does not have spectral coordinates - cannot make spectral cutout"
+    assert wcs.has_spectral, (
+        "WCS does not have spectral coordinates - cannot make spectral cutout"
+    )
     if wcs.wcs.specsys == "":
         logger.warning("No spectral system defined in WCS - assuming TOPOCENT")
         wcs.wcs.specsys = "TOPOCENT"
@@ -417,9 +417,9 @@ def make_cutout(
                 logger.info("Found BEAMS ext! Cutting out beam table...")
                 needs_beamtable_ext = int(np.where(needs_beamtable)[0])
                 is_beamtable_ext = int(np.where(is_beamtable)[0])
-                assert (
-                    is_beamtable_ext == ext
-                ), "Beam table extension is not where we think it is!"
+                assert is_beamtable_ext == ext, (
+                    "Beam table extension is not where we think it is!"
+                )
                 logger.debug("Original BEAMS ext: \n%s", hdu.header.tostring(sep="\n"))
                 image_hdu: fits.PrimaryHDU | fits.ImageHDU = hdul[needs_beamtable_ext]
                 image_wcs = WCS(image_hdu.header)  # pylint: disable=no-member

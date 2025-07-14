@@ -53,7 +53,7 @@ class SampleData(NamedTuple):
     data_path: Path
 
 
-@pytest.fixture()
+@pytest.fixture
 def sample_data(tmpdir) -> np.Generator[SampleData, np.Any, None]:
     n_ra_pix = 128
     n_dec_pix = 128
@@ -80,11 +80,11 @@ NAXIS4  =                  {shape[3]}
 NAXIS5  =                  {shape[4]}
 CTYPE1  = 'RA---SIN'           / Right ascension
 CRVAL1  =                  {ra_center} / [deg] RA at CRPIX1
-CDELT1  =                  {-fov/60 / n_ra_pix} / [deg] RA increment
+CDELT1  =                  {-fov / 60 / n_ra_pix} / [deg] RA increment
 CRPIX1  =                  {n_ra_pix / 2} / Reference pixel in RA
 CTYPE2  = 'DEC--SIN'           / Declination
 CRVAL2  =                  {dec_center} / [deg] DEC at CRPIX2
-CDELT2  =                  {fov/60 / n_dec_pix} / [deg] DEC increment
+CDELT2  =                  {fov / 60 / n_dec_pix} / [deg] DEC increment
 CRPIX2  =                  {n_dec_pix / 2} / Reference pixel in DEC
 CTYPE3  = 'FREQ    '           / Frequency
 CRVAL3  =                  {freq_start} / [GHz] FREQ at CRPIX3
@@ -123,14 +123,14 @@ BPA     =                  0 / [deg] Beam position angle
     tmp_path.unlink()
 
 
-@pytest.fixture()
+@pytest.fixture
 def center_coord(sample_data: SampleData) -> SkyCoord:
     header = fits.getheader(sample_data.data_path)
     wcs = WCS(header)
     return wcs.celestial.pixel_to_world(*wcs.celestial.wcs.crpix)
 
 
-@pytest.fixture()
+@pytest.fixture
 def temp_dir_path(tmpdir) -> Path:
     return Path(tmpdir)
 
