@@ -415,8 +415,15 @@ def make_cutout(
         for ext, hdu in enumerate(hdul):
             if hdu.name == "BEAMS":
                 logger.info("Found BEAMS ext! Cutting out beam table...")
-                needs_beamtable_ext = int(np.where(needs_beamtable)[0])
-                is_beamtable_ext = int(np.where(is_beamtable)[0])
+                needs_beamtable_indices = np.where(needs_beamtable)[0]
+                is_beamtable_indices = np.where(is_beamtable)[0]
+                needs_beamtable_count = len(needs_beamtable_indices)
+                is_beamtable_count = len(is_beamtable_indices)
+                if needs_beamtable_count != 1 or is_beamtable_count != 1:
+                    msg = f"We are expecting exactly one BEAMS extension and one header that requires a beam table, but we found {is_beamtable_count} and {needs_beamtable_count}!"
+                    raise ValueError(msg)
+                needs_beamtable_ext = int(needs_beamtable_indices[0])
+                is_beamtable_ext = int(is_beamtable_indices[0])
                 assert is_beamtable_ext == ext, (
                     "Beam table extension is not where we think it is!"
                 )
