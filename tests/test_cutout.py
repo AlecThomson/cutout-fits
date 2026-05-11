@@ -12,6 +12,7 @@ import numpy as np
 import pytest
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
+from astropy.table import Table
 from astropy.wcs import WCS
 
 from cutout_fits import cutout
@@ -135,6 +136,72 @@ def temp_dir_path(tmpdir) -> Path:
     return Path(tmpdir)
 
 
+@pytest.fixture
+def beamtable_data(sample_data: SampleData, tmpdir) -> np.Generator[Path, np.Any, None]:
+    tmp_path = Path(tmpdir) / "beamtable_test.fits"
+
+    with fits.open(sample_data.data_path) as hdul:
+        image_hdu = hdul[0].copy()
+    image_hdu.header["CASAMBM"] = True
+
+    beams_table = Table(
+        {
+            "CHAN": np.arange(sample_data.n_freq, dtype=np.int32),
+            "BMAJ": np.full(sample_data.n_freq, 1.0, dtype=np.float32),
+            "BMIN": np.full(sample_data.n_freq, 1.0, dtype=np.float32),
+            "BPA": np.zeros(sample_data.n_freq, dtype=np.float32),
+        }
+    )
+    beams_hdu = fits.BinTableHDU(beams_table, name="BEAMS")
+    beams_hdu.header["NCHAN"] = sample_data.n_freq
+
+    fits.HDUList([image_hdu, beams_hdu]).writeto(tmp_path, overwrite=True)
+    yield tmp_path
+    tmp_path.unlink()
+
+
+@pytest.fixture
+def no_beamtable_data(
+    sample_data: SampleData, tmpdir
+) -> np.Generator[Path, np.Any, None]:
+    tmp_path = Path(tmpdir) / "no_beamtable_test.fits"
+
+    with fits.open(sample_data.data_path) as hdul:
+        image_hdu = hdul[0].copy()
+    image_hdu.header["CASAMBM"] = True
+
+    fits.HDUList([image_hdu]).writeto(tmp_path, overwrite=True)
+    yield tmp_path
+    tmp_path.unlink()
+
+
+@pytest.fixture
+def beamtable_without_requirement_data(
+    sample_data: SampleData, tmpdir
+) -> np.Generator[Path, np.Any, None]:
+    tmp_path = Path(tmpdir) / "beamtable_without_requirement_test.fits"
+
+    with fits.open(sample_data.data_path) as hdul:
+        image_hdu = hdul[0].copy()
+    if "CASAMBM" in image_hdu.header:
+        del image_hdu.header["CASAMBM"]
+
+    beams_table = Table(
+        {
+            "CHAN": np.arange(sample_data.n_freq, dtype=np.int32),
+            "BMAJ": np.full(sample_data.n_freq, 1.0, dtype=np.float32),
+            "BMIN": np.full(sample_data.n_freq, 1.0, dtype=np.float32),
+            "BPA": np.zeros(sample_data.n_freq, dtype=np.float32),
+        }
+    )
+    beams_hdu = fits.BinTableHDU(beams_table, name="BEAMS")
+    beams_hdu.header["NCHAN"] = sample_data.n_freq
+
+    fits.HDUList([image_hdu, beams_hdu]).writeto(tmp_path, overwrite=True)
+    yield tmp_path
+    tmp_path.unlink()
+
+
 def test_cutout_half(sample_data, center_coord, temp_dir_path):
     out_path = temp_dir_path / "temp.fits"
     cut_hdul = cutout.make_cutout(
@@ -210,3 +277,68 @@ def test_slicer_to_shape(sample_data, center_coord, temp_dir_path):
     logger.critical("%s", shape_str)
     known_str = "{'TIME': 1, 'STOKES': 4, 'FREQ': 8, 'DEC--SIN': 128, 'RA---SIN': 128}"
     assert shape_str == known_str
+
+
+def test_cutout_with_single_beamtable_extension(
+    sample_data: SampleData,
+    center_coord: SkyCoord,
+    temp_dir_path: Path,
+    beamtable_data: Path,
+):
+    out_path = temp_dir_path / "beamtable_out.fits"
+    cut_hdul = cutout.make_cutout(
+        infile=beamtable_data.as_posix(),
+        outfile=out_path.as_posix(),
+        ra_deg=center_coord.ra.deg,
+        dec_deg=center_coord.dec.deg,
+        radius_arcmin=sample_data.fov,
+        overwrite=True,
+    )
+
+    out_path.unlink()
+    assert cut_hdul is not None
+    assert len(cut_hdul) == 2
+    assert cut_hdul[1].name == "BEAMS"
+    assert cut_hdul[1].header["NCHAN"] == sample_data.n_freq
+
+
+def test_cutout_raises_when_beamtable_required_but_missing(
+    center_coord: SkyCoord,
+    temp_dir_path: Path,
+    no_beamtable_data: Path,
+):
+    out_path = temp_dir_path / "no_beamtable_out.fits"
+
+    with pytest.raises(
+        ValueError,
+        match="Beam table required in header, but no beam table extension found!",
+    ):
+        cutout.make_cutout(
+            infile=no_beamtable_data.as_posix(),
+            outfile=out_path.as_posix(),
+            ra_deg=center_coord.ra.deg,
+            dec_deg=center_coord.dec.deg,
+            radius_arcmin=60,
+            overwrite=True,
+        )
+
+
+def test_cutout_raises_when_beamtable_present_but_not_required(
+    center_coord: SkyCoord,
+    temp_dir_path: Path,
+    beamtable_without_requirement_data: Path,
+):
+    out_path = temp_dir_path / "beamtable_without_requirement_out.fits"
+
+    with pytest.raises(
+        ValueError,
+        match="Beam table extension found, but no beam table required in any header!",
+    ):
+        cutout.make_cutout(
+            infile=beamtable_without_requirement_data.as_posix(),
+            outfile=out_path.as_posix(),
+            ra_deg=center_coord.ra.deg,
+            dec_deg=center_coord.dec.deg,
+            radius_arcmin=60,
+            overwrite=True,
+        )
