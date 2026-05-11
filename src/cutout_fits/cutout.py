@@ -280,7 +280,7 @@ def format_shape(wcs: WCS, shape: tuple[int, ...]) -> str:
     """
     crtypes = list(wcs.wcs.ctype)[::-1]
     shape_int = [int(s) for s in shape]
-    shape_dict = dict(zip(crtypes, shape_int))
+    shape_dict = dict(zip(crtypes, shape_int, strict=False))
     return str(shape_dict)
 
 
