@@ -8,12 +8,14 @@ except ImportError:
 from pathlib import Path
 from typing import NamedTuple
 
+import fsspec.core
 import numpy as np
 import pytest
 from astropy.coordinates import SkyCoord
 from astropy.io import fits
 from astropy.table import Table
 from astropy.wcs import WCS
+from fsspec.implementations.local import LocalFileSystem
 
 from cutout_fits import cutout
 from cutout_fits.logger import logger
@@ -342,3 +344,168 @@ def test_cutout_raises_when_beamtable_present_but_not_required(
             radius_arcmin=60,
             overwrite=True,
         )
+
+
+@pytest.fixture
+def plain_data_path(sample_data: SampleData, tmpdir) -> Path:
+    """Uncompressed copy with random data - fetch_section skips compressed files"""
+    tmp_path = Path(tmpdir) / "plain.fits"
+    header = fits.getheader(sample_data.data_path)
+    rng = np.random.default_rng(0)
+    data = rng.standard_normal(
+        (
+            sample_data.n_time,
+            sample_data.n_pol,
+            sample_data.n_freq,
+            sample_data.n_dec_pix,
+            sample_data.n_ra_pix,
+        )
+    ).astype(np.float32)
+    fits.PrimaryHDU(data, header=header).writeto(tmp_path)
+    return tmp_path
+
+
+SLICERS = [
+    (slice(None), slice(None), slice(None), slice(10, 20), slice(30, 50)),
+    (slice(0, 1), slice(1, 3), slice(2, 3), slice(0, 128), slice(0, 128)),
+    (slice(None), slice(0, 1), slice(None), slice(120, 128), slice(0, 5)),
+    (slice(None), slice(None), slice(None), slice(None), slice(None)),
+]
+
+
+@pytest.mark.parametrize("slicer", SLICERS)
+@pytest.mark.parametrize(
+    ("join_within_bytes", "max_request_bytes"), [(0, 1), (1024**2, 1024**2)]
+)
+def test_fetch_section_matches_section(
+    plain_data_path, slicer, join_within_bytes, max_request_bytes
+):
+    fs, path = fsspec.core.url_to_fs(plain_data_path.as_posix())
+    with fits.open(plain_data_path) as hdul:
+        hdu = hdul[0]
+        expected = hdu.section[slicer]
+        got = cutout.fetch_section(
+            hdu,
+            slicer,
+            fs,
+            path,
+            join_within_bytes=join_within_bytes,
+            max_request_bytes=max_request_bytes,
+        )
+    np.testing.assert_array_equal(got, expected)
+
+
+@pytest.mark.parametrize("dtype", [np.int16, np.uint16, np.float64])
+def test_fetch_section_dtypes_and_extension(tmpdir, dtype):
+    tmp_path = Path(tmpdir) / "ext.fits"
+    data = np.arange(6 * 7 * 8).reshape(6, 7, 8).astype(dtype)
+    fits.HDUList([fits.PrimaryHDU(), fits.ImageHDU(data)]).writeto(tmp_path)
+    slicer = (slice(1, 4), slice(2, 5), slice(3, 7))
+    fs, path = fsspec.core.url_to_fs(tmp_path.as_posix())
+    with fits.open(tmp_path) as hdul:
+        got = cutout.fetch_section(hdul[1], slicer, fs, path)
+    np.testing.assert_array_equal(got, data[slicer])
+    assert got.dtype == data.dtype
+
+
+def test_cutout_at_edge(plain_data_path, temp_dir_path):
+    with fits.open(plain_data_path) as hdul:
+        data = hdul[0].data.copy()
+        wcs_in = WCS(hdul[0].header)
+    corner = wcs_in.celestial.pixel_to_world(0, 0)
+    cut_hdul = cutout.make_cutout(
+        infile=plain_data_path.as_posix(),
+        outfile=(temp_dir_path / "edge.fits").as_posix(),
+        ra_deg=corner.ra.deg,
+        dec_deg=corner.dec.deg,
+        radius_arcmin=5,
+    )
+    cut = cut_hdul[0]
+    n_dec, n_ra = cut.data.shape[-2:]
+    assert n_dec > 0
+    assert n_ra > 0
+    np.testing.assert_array_equal(cut.data, data[..., :n_dec, :n_ra])
+    wcs_out = WCS(cut.header).celestial
+    assert wcs_out.pixel_to_world(0, 0).separation(corner).arcsec < 1e-6
+
+
+@pytest.mark.parametrize(("crval", "cdelt"), [(1.0, 0.125), (1.875, -0.125)])
+def test_spectral_range_inclusive(
+    plain_data_path, center_coord, temp_dir_path, crval, cdelt
+):
+    with fits.open(plain_data_path, mode="update") as hdul:
+        hdul[0].header["CRVAL3"] = crval
+        hdul[0].header["CDELT3"] = cdelt
+    cut_hdul = cutout.make_cutout(
+        infile=plain_data_path.as_posix(),
+        outfile=(temp_dir_path / "spec.fits").as_posix(),
+        ra_deg=center_coord.ra.deg,
+        dec_deg=center_coord.dec.deg,
+        radius_arcmin=5,
+        freq_start_hz=1.125,
+        freq_end_hz=1.5,
+    )
+    spec_wcs = WCS(cut_hdul[0].header).spectral
+    freqs = spec_wcs.pixel_to_world(np.arange(spec_wcs.pixel_shape[0])).to_value("Hz")
+    np.testing.assert_allclose(sorted(freqs), [1.125, 1.25, 1.375, 1.5])
+
+
+def test_cutout_outside_image_raises(plain_data_path, temp_dir_path):
+    with pytest.raises(ValueError, match="does not overlap"):
+        cutout.make_cutout(
+            infile=plain_data_path.as_posix(),
+            outfile=(temp_dir_path / "outside.fits").as_posix(),
+            ra_deg=10,
+            dec_deg=0,
+            radius_arcmin=5,
+        )
+
+
+def test_fetch_section_retries_failed_ranges(plain_data_path):
+    class FlakyFS(LocalFileSystem):
+        calls = 0
+
+        def cat_ranges(self, *args, **kwargs):
+            out = super().cat_ranges(*args, **kwargs)
+            FlakyFS.calls += 1
+            if FlakyFS.calls == 1:
+                out[0] = OSError("dropped")
+            return out
+
+    fs = FlakyFS(skip_instance_cache=True)
+    slicer = SLICERS[0]
+    with fits.open(plain_data_path) as hdul:
+        expected = hdul[0].section[slicer]
+        got = cutout.fetch_section(
+            hdul[0],
+            slicer,
+            fs,
+            plain_data_path.as_posix(),
+            join_within_bytes=0,
+            max_request_bytes=1,
+        )
+    assert FlakyFS.calls == 2
+    np.testing.assert_array_equal(got, expected)
+
+
+def test_cutout_2d_with_empty_primary(temp_dir_path):
+    wcs = WCS(naxis=2)
+    wcs.wcs.ctype = ["RA---TAN", "DEC--TAN"]
+    wcs.wcs.crpix = [50, 50]
+    wcs.wcs.cdelt = [-1 / 3600, 1 / 3600]
+    wcs.wcs.crval = [10, -30]
+    data = np.arange(100 * 100, dtype=np.float32).reshape(100, 100)
+    in_path = temp_dir_path / "img2d.fits"
+    fits.HDUList([fits.PrimaryHDU(), fits.ImageHDU(data, wcs.to_header())]).writeto(
+        in_path
+    )
+    cut_hdul = cutout.make_cutout(
+        infile=in_path.as_posix(),
+        outfile=(temp_dir_path / "img2d_out.fits").as_posix(),
+        ra_deg=10,
+        dec_deg=-30,
+        radius_arcmin=0.5,
+        join_within_bytes=0,
+    )
+    assert cut_hdul[0].data is None
+    assert 0 < cut_hdul[1].data.shape[0] < 100

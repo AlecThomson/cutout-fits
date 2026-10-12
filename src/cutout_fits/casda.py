@@ -11,7 +11,7 @@ from astroquery.casda import Casda
 from astroquery.casda.core import CasdaClass
 from astroquery.utils.tap.core import TapPlus
 
-from cutout_fits.cutout import get_cutout_parser, make_cutout
+from cutout_fits.cutout import get_cutout_parser, get_fetch_kwargs, make_cutout
 from cutout_fits.logger import logger, set_verbosity
 
 
@@ -28,7 +28,8 @@ async def get_staging_url(file_name: str) -> Table:
         Table: Table of results
     """
     tap = TapPlus(url="https://casda.csiro.au/casda_vo_tools/tap")
-    query_str = f"SELECT access_url, filename FROM ivoa.obscore WHERE filename='{file_name}' AND dataproduct_type='cube'"
+    adql_file_name = file_name.replace("'", "''")
+    query_str = f"SELECT access_url, filename FROM ivoa.obscore WHERE filename='{adql_file_name}' AND dataproduct_type='cube'"
     msg = f"Querying CASDA for {file_name}"
     logger.info(msg)
     msg = f"Query: {query_str}"
@@ -36,7 +37,7 @@ async def get_staging_url(file_name: str) -> Table:
     job = await asyncio.to_thread(tap.launch_job_async, query_str)
     results = job.get_results()
 
-    if results is None:
+    if results is None or len(results) == 0:
         msg = f"Query was {query_str}"
         logger.error(msg)
         msg = "No results found!"
@@ -59,7 +60,9 @@ async def get_download_url(result_table: Table, casda: CasdaClass) -> str:
     Returns:
         str: Download URL
     """
-    assert len(result_table) == 1, "Multiple files found!"
+    if len(result_table) != 1:
+        msg = f"Expected one file, found {len(result_table)}!"
+        raise ValueError(msg)
     logger.info("Staging data on CASDA...")
     url_list: list[str] = await asyncio.to_thread(casda.stage_data, result_table)
 
@@ -121,6 +124,7 @@ async def cutout_from_casda(
     output_dir: Path,
     freq_start_hz: float | None = None,
     freq_end_hz: float | None = None,
+    **fetch_kwargs: int,
 ) -> fits.HDUList:
     """Stage a file on CASDA and make a cutout.
 
@@ -133,6 +137,7 @@ async def cutout_from_casda(
         output_dir (Path): Directory to save FITS cutouts
         freq_start_hz (float | None, optional): Starting frequency in Hz. Defaults to None.
         freq_end_hz (float | None, optional): Stopping frequency in Hz. Defaults to None.
+        **fetch_kwargs (int): Download settings passed to `fetch_section`.
 
     Returns:
         fits.HDUList: FITS HDU list
@@ -150,6 +155,7 @@ async def cutout_from_casda(
         freq_start_hz=freq_start_hz,
         freq_end_hz=freq_end_hz,
         overwrite=True,
+        **fetch_kwargs,
     )
 
 
@@ -164,6 +170,7 @@ async def get_cutouts_from_casda(
     freq_end_hz: float | None = None,
     store_password: bool = False,
     reenter_password: bool = False,
+    **fetch_kwargs: int,
 ) -> list[fits.HDUList]:
     """Get cutouts from CASDA.
 
@@ -178,6 +185,7 @@ async def get_cutouts_from_casda(
         freq_end_hz (float | None, optional): Stopping frequnecy in Hz. Defaults to None.
         store_password (bool, optional): Store CASDA password. Defaults to False.
         reenter_password (bool, optional): Force CASDA password prompt. Defaults to False.
+        **fetch_kwargs (int): Download settings passed to `fetch_section`.
 
     Returns:
         list[fits.HDUList]: List of FITS HDU lists
@@ -202,6 +210,7 @@ async def get_cutouts_from_casda(
             output_dir=output_dir,
             freq_start_hz=freq_start_hz,
             freq_end_hz=freq_end_hz,
+            **fetch_kwargs,
         )
         tasks.append(task)
 
@@ -272,6 +281,7 @@ def main() -> None:
             username=args.username,
             store_password=args.store_password,
             reenter_password=args.reenter_password,
+            **get_fetch_kwargs(args),
         )
     )
 

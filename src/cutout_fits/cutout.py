@@ -15,6 +15,8 @@ from astropy.table import Table
 from astropy.wcs import WCS
 from astropy.wcs.utils import skycoord_to_pixel
 from dotenv import load_dotenv
+from fsspec.spec import AbstractFileSystem
+from fsspec.utils import merge_offset_ranges
 
 from cutout_fits.logger import logger, set_verbosity
 
@@ -87,9 +89,9 @@ def get_spatial_indices(
     Returns:
         SpatialIndex: start_ra_index, end_ra_index, start_dec_index, end_dec_index
     """
-    assert wcs.has_celestial, (
-        "WCS does not have celestial coordinates - cannot make spatial cutout"
-    )
+    if not wcs.has_celestial:
+        msg = "WCS does not have celestial coordinates - cannot make spatial cutout"
+        raise ValueError(msg)
 
     # Offset each corner by the radius in the diagonal direction
     # sqrt(2) is used to get the diagonal distance - i.e. a square cutout
@@ -127,10 +129,12 @@ def get_spatial_indices(
     _y_bottom = 0 if np.isnan(_y_bottom) else _y_bottom
 
     # Compare all points in case of insanity at the poles
-    start_dec_index = int(np.floor(min(y_bottom, _y_bottom, y_top, _y_top)))
-    end_dec_index = int(np.ceil(max(y_bottom, _y_bottom, y_top, _y_top)))
-    start_ra_index = int(np.floor(min(x_left, x_right, _x_left, _x_right)))
-    end_ra_index = int(np.ceil(max(x_left, x_right, _x_left, _x_right)))
+    # Clip to the image - negative indices wrap around in numpy
+    n_ra, n_dec = wcs.celestial.pixel_shape
+    start_dec_index = max(int(np.floor(min(y_bottom, _y_bottom, y_top, _y_top))), 0)
+    end_dec_index = min(int(np.ceil(max(y_bottom, _y_bottom, y_top, _y_top))), n_dec)
+    start_ra_index = max(int(np.floor(min(x_left, x_right, _x_left, _x_right))), 0)
+    end_ra_index = min(int(np.ceil(max(x_left, x_right, _x_left, _x_right))), n_ra)
 
     return SpatialIndex(
         start_ra_index=start_ra_index,
@@ -155,25 +159,33 @@ def get_spectral_indices(
     Returns:
         SpectralIndex: start_freq_index, end_freq_index
     """
-    assert wcs.has_spectral, (
-        "WCS does not have spectral coordinates - cannot make spectral cutout"
-    )
+    if not wcs.has_spectral:
+        msg = "WCS does not have spectral coordinates - cannot make spectral cutout"
+        raise ValueError(msg)
     if wcs.wcs.specsys == "":
         logger.warning("No spectral system defined in WCS - assuming TOPOCENT")
         wcs.wcs.specsys = "TOPOCENT"
 
-    start_freq_index = (
-        wcs.spectral.world_to_array_index(start_freq)
-        if start_freq is not None
-        else None
-    )
-    end_freq_index = (
-        wcs.spectral.world_to_array_index(end_freq) if end_freq is not None else None
-    )
+    if start_freq is None and end_freq is None:
+        return SpectralIndex(start_freq_index=None, end_freq_index=None)
 
+    # Default to the cube's frequency limits - works for either channel ordering
+    n_chan = wcs.spectral.pixel_shape[0]
+    edges = wcs.spectral.array_index_to_world([0, n_chan - 1])
+    start = int(
+        wcs.spectral.world_to_array_index(
+            edges.min() if start_freq is None else start_freq
+        )
+    )
+    end = int(
+        wcs.spectral.world_to_array_index(edges.max() if end_freq is None else end_freq)
+    )
+    start, end = sorted((start, end))
+
+    # Include the end channel
     return SpectralIndex(
-        start_freq_index=start_freq_index,
-        end_freq_index=end_freq_index,
+        start_freq_index=max(start, 0),
+        end_freq_index=min(end + 1, n_chan),
     )
 
 
@@ -217,7 +229,11 @@ def make_slicer(
 
     spatial_indices = get_spatial_indices(wcs, centre, radius)
     logger.debug("Spatial indices: %s", spatial_indices)
-    spectral_indices = get_spectral_indices(wcs, start_freq, end_freq)
+    spectral_indices = (
+        get_spectral_indices(wcs, start_freq, end_freq)
+        if wcs.has_spectral
+        else SpectralIndex(start_freq_index=None, end_freq_index=None)
+    )
     logger.debug("Spectral indices: %s", spectral_indices)
     stokes_indices = get_stokes_indices(wcs)
     logger.debug("Stokes indices: %s", stokes_indices)
@@ -241,6 +257,11 @@ def make_slicer(
             slicer.append(slice(None))
             continue
         slicer.append(slice_mapping[map_key])
+
+    for key, s in zip(array_ordering, slicer, strict=True):
+        if s.start is not None and s.stop is not None and s.start >= s.stop:
+            msg = f"Cutout does not overlap the image along {key}"
+            raise ValueError(msg)
     return tuple(slicer)
 
 
@@ -341,6 +362,113 @@ def cutout_beamtable(
     return cut_hdu
 
 
+def fetch_section(
+    hdu: fits.PrimaryHDU | fits.ImageHDU,
+    slicer: tuple[slice, ...],
+    fs: AbstractFileSystem,
+    path: str,
+    join_within_bytes: int = 128 * 1024,
+    max_request_bytes: int = 16 * 1024**2,
+    max_parallel_requests: int = 64,
+    retries: int = 2,
+) -> np.ndarray:
+    """Get a cutout, requesting all rows from the server at once
+
+    Same result as ``hdu.section[slicer]``, which reads one row at a time.
+    Falls back to that for compressed or scaled data.
+
+    Args:
+        hdu (fits.PrimaryHDU | fits.ImageHDU): Image HDU opened from ``path``
+        slicer (tuple[slice, ...]): Slicer for the cutout - in numpy order
+        fs (AbstractFileSystem): Filesystem holding ``path``
+        path (str): Path to the FITS file on ``fs``
+        join_within_bytes (int, optional): Download two rows in one request (including the pixels between them) if they are fewer than this many bytes apart in the file. Defaults to 128 KiB.
+        max_request_bytes (int, optional): Maximum bytes per request. Defaults to 16 MiB.
+        max_parallel_requests (int, optional): Requests sent at once. Defaults to 64.
+        retries (int, optional): Retries for failed requests. Defaults to 2.
+
+    Returns:
+        np.ndarray: Cutout data
+    """
+    fileinfo = hdu.fileinfo()
+    header = hdu.header
+    if (
+        fileinfo is None
+        or fileinfo["file"].compression is not None
+        or isinstance(hdu, fits.CompImageHDU)
+        or header.get("BSCALE", 1) != 1
+        or header.get("BZERO", 0) != 0
+        or len(hdu.shape) < 2
+    ):
+        logger.debug("Falling back to astropy section")
+        section: np.ndarray = hdu.section[slicer]
+        return section
+
+    shape = hdu.shape
+    dtype = hdu.section.dtype.newbyteorder(">")
+    itemsize = dtype.itemsize
+    *outer, inner = (
+        slice(*s.indices(n)[:2]) for s, n in zip(slicer, shape, strict=True)
+    )
+    out_shape = (*(s.stop - s.start for s in outer), inner.stop - inner.start)
+    row_len = out_shape[-1]
+
+    # Byte range of each row in the file
+    grid = np.indices(out_shape[:-1]).reshape(len(outer), -1)
+    grid += np.array([s.start for s in outer])[:, None]
+    rows = np.ravel_multi_index(tuple(grid), shape[:-1])
+    starts = fileinfo["datLoc"] + (rows * shape[-1] + inner.start) * itemsize
+    ends = starts + row_len * itemsize
+
+    n_rows = len(starts)
+    _, block_starts, block_ends = merge_offset_ranges(
+        [path] * n_rows,
+        starts.tolist(),
+        ends.tolist(),
+        max_gap=join_within_bytes,
+        max_block=max_request_bytes,
+        sort=False,
+    )
+    n_blocks = len(block_starts)
+    logger.info("Fetching %d rows in %d requests", n_rows, n_blocks)
+    kwargs = {"batch_size": max_parallel_requests} if fs.async_impl else {}
+    blocks = list(
+        fs.cat_ranges(
+            [path] * n_blocks, block_starts, block_ends, on_error="return", **kwargs
+        )
+    )
+    for _ in range(retries):
+        failed = [i for i, b in enumerate(blocks) if isinstance(b, Exception)]
+        if not failed:
+            break
+        logger.warning("Retrying %d of %d failed requests", len(failed), n_blocks)
+        retried = fs.cat_ranges(
+            [path] * len(failed),
+            [block_starts[i] for i in failed],
+            [block_ends[i] for i in failed],
+            on_error="return",
+            **kwargs,
+        )
+        for i, block in zip(failed, retried, strict=True):
+            blocks[i] = block
+    for block, start, end in zip(blocks, block_starts, block_ends, strict=True):
+        if isinstance(block, Exception):
+            raise block
+        # Some servers ignore the range and send the whole file
+        if len(block) != end - start:
+            msg = f"Expected {end - start} bytes from {path}, got {len(block)}"
+            raise OSError(msg)
+
+    # Pick each row out of the downloaded blocks
+    block_starts_arr = np.array(block_starts)
+    block_offsets = np.cumsum([0, *(len(b) for b in blocks[:-1])])
+    owner = np.searchsorted(block_starts_arr, starts, side="right") - 1
+    row_offsets = (block_offsets[owner] + starts - block_starts_arr[owner]) // itemsize
+    flat = np.frombuffer(b"".join(blocks), dtype=dtype)
+    data: np.ndarray = flat[row_offsets[:, None] + np.arange(row_len)]
+    return data.reshape(out_shape).astype(dtype.newbyteorder("="))
+
+
 def make_cutout(
     infile: str,
     outfile: str,
@@ -350,6 +478,7 @@ def make_cutout(
     freq_start_hz: float | None = None,
     freq_end_hz: float | None = None,
     overwrite: bool = False,
+    **fetch_kwargs: int,
 ) -> fits.HDUList:
     """Make a cutout of a FITS file
 
@@ -362,6 +491,7 @@ def make_cutout(
         freq_start_hz (float | None, optional): Start frequency in Hz. Defaults to None.
         freq_end_hz (float | None, optional): End frequency in Hz. Defaults to None.
         overwrite (bool): Whether to overwrite the output file.
+        **fetch_kwargs (int): Download settings passed to `fetch_section`.
 
     Returns:
         fits.HDUList: Cutout HDUList
@@ -374,19 +504,13 @@ def make_cutout(
         fsspec_kwargs["secret"] = os.getenv("FSSPEC_S3_SECRET")
         fsspec_kwargs["endpoint_url"] = os.getenv("FSSPEC_S3_ENDPOINT_URL")
 
-    elif infile.startswith(("https://", "http://")):
-        logger.info("Attempting to access HTTP(S) file...")
-        fsspec.core.DEFAULT_EXPAND = True
-
+    fs, path = fsspec.core.url_to_fs(infile, **fsspec_kwargs)
     cutout_hdulist = fits.HDUList()
-    with fits.open(
-        infile,
-        fsspec_kwargs=fsspec_kwargs,
-        use_fsspec=True,
-        memmap=True,
-        mode="denywrite",
-        output_verify="silentfix",
-    ) as hdul:
+    with (
+        # Mostly reads headers - fsspec's default 5 MB block is overkill
+        fs.open(path, "rb", block_size=1024**2) as fobj,
+        fits.open(fobj, output_verify="silentfix") as hdul,
+    ):
         # First check if beams tables are reported
         needs_beamtable = np.zeros(len(hdul), dtype=bool)
         is_beamtable = np.zeros(len(hdul), dtype=bool)
@@ -442,10 +566,11 @@ def make_cutout(
                 )
                 continue
 
-            # Only cutout primary and image HDUs
+            # Only cutout primary and image HDUs with data
             # All other HDUs are passed through
-            if not isinstance(hdu, fits.PrimaryHDU) and not isinstance(
-                hdu, fits.ImageHDU
+            if (
+                not isinstance(hdu, fits.PrimaryHDU | fits.ImageHDU)
+                or hdu.header.get("NAXIS", 0) == 0
             ):
                 logger.debug("Skipping cutting HDU: %s", hdu)
                 cutout_hdulist.append(hdu)
@@ -473,7 +598,7 @@ def make_cutout(
 
             # Download will start here
             tick = time()
-            cutout_data = hdu.section[slicer]
+            cutout_data = fetch_section(hdu, slicer, fs, path, **fetch_kwargs)
             tock = time()
             logger.info("Cutout obtained! Took %.2f seconds", tock - tick)
             # Make sure the header is updated to reflect the cutout
@@ -526,7 +651,33 @@ def get_cutout_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
         help="End frequency in Hz",
         default=None,
     )
+    download = cutout_parser.add_argument_group("Download options (see README)")
+    download.add_argument(
+        "--join-within-bytes",
+        type=int,
+        default=None,
+        help="Download two rows in one request if fewer than this many bytes apart",
+    )
+    download.add_argument(
+        "--max-parallel-requests",
+        type=int,
+        default=None,
+        help="Requests sent to the server at once",
+    )
     return cutout_parser
+
+
+def get_fetch_kwargs(args: argparse.Namespace) -> dict[str, int]:
+    """Download options set on the command line
+
+    Args:
+        args (argparse.Namespace): Parsed arguments
+
+    Returns:
+        dict[str, int]: Options to pass to `fetch_section`
+    """
+    names = ("join_within_bytes", "max_parallel_requests")
+    return {n: getattr(args, n) for n in names if getattr(args, n) is not None}
 
 
 def main() -> None:
@@ -551,6 +702,7 @@ def main() -> None:
         freq_start_hz=args.freq_start,
         freq_end_hz=args.freq_end,
         overwrite=args.overwrite,
+        **get_fetch_kwargs(args),
     )
 
 
