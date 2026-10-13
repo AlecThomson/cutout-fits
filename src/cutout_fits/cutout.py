@@ -534,12 +534,12 @@ def cat_ranges_with_progress(
     # disable=None hides the bar when not writing to a terminal (e.g. batch jobs)
     with tqdm(
         total=len(starts), desc=desc, unit=" requests", disable=disable_progress or None
-    ) as bar:
+    ) as pbar:
         if fs.async_impl:
             # cat_ranges can't report progress, so run its coroutines here instead
-            callback = Callback(hooks={"tqdm": lambda *_, **__: bar.update()})
+            callback = Callback(hooks={"tqdm": lambda *_, **__: pbar.update()})
             coros = [
-                fs._cat_file(path, start=start, end=end)
+                fs._cat_file(path, start=start, end=end)  # pylint: disable=protected-access
                 for start, end in zip(starts, ends, strict=True)
             ]
             out = sync(
@@ -553,7 +553,7 @@ def cat_ranges_with_progress(
             )
         else:
             out = fs.cat_ranges([path] * len(starts), starts, ends, on_error="return")
-        bar.update(len(starts) - bar.n)
+        pbar.update(len(starts) - pbar.n)
     return list(out)
 
 
