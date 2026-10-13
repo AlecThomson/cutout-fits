@@ -459,7 +459,7 @@ def test_cutout_outside_image_raises(plain_data_path, temp_dir_path):
 
 
 def test_fetch_section_retries_failed_ranges(plain_data_path):
-    class FlakyFS(LocalFileSystem):
+    class FlakyFS(LocalFileSystem):  # type: ignore[misc]
         calls = 0
 
         def cat_ranges(self, *args, **kwargs):

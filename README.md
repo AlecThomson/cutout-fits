@@ -131,7 +131,7 @@ Cutout options:
 Download options:
   --max-request-kb MAX_REQUEST_KB
                         Largest single request in kB. Rows less than a quarter of this apart are
-                        downloaded together (default 64)
+                        downloaded together (default 256)
   --max-parallel-requests MAX_PARALLEL_REQUESTS
                         Requests sent to the server at once (default 64)
   -n, --dry-run         Print the download plan without downloading
@@ -203,8 +203,8 @@ Each request to a server has some overhead, so if two rows of the cutout are
 close together in the file, it is faster to grab both in one request, along with
 the pixels in between, than to ask for them separately. Rows are joined like
 this if they are less than a quarter of `--max-request-kb` apart (16 kB by
-default). `--max-parallel-requests` sets how many requests are sent at once (64
-by default).
+default, 64 kB for `cutout-casda`). `--max-parallel-requests` sets how many
+requests are sent at once (64 by default).
 
 To see what would be downloaded without downloading anything, use `--dry-run`.
 With `-v`, the same information is printed before each download. For example,
@@ -222,8 +222,10 @@ Downloaded 18.7 MB in 3.1 s (6.0 MB/s), 0 retried
 
 Here the rows are 11.1 kB apart, so they are joined into 348 requests, and 11.3
 MB is downloaded on top of the 7.4 MB cutout. For a small cutout of a wide CASDA
-cube the rows are much further apart (51.3 kB), so each row is requested on its
-own and nothing extra is downloaded.
+cube the rows are much further apart (51.3 kB). With `cutout-fits` defaults each
+row would be requested on its own, but `cutout-casda` joins them, as this was
+about four times faster in our tests even though it downloads far more data than
+the cutout.
 
 Progress bars are shown by default, and are hidden automatically when output is
 not going to a terminal (e.g. in batch jobs). `--disable-progress` turns them
@@ -232,10 +234,9 @@ requests are retried up to four times, waiting longer and sending fewer requests
 at once each time.
 
 The defaults should work well in most cases. In our tests they worked well for
-AWS S3. For CASDA on a fast connection, `--max-request-kb 256` was about four
-times faster, even though it downloads far more data than the cutout. If you see
-a lot of retries, the server is either limiting how fast you can ask (error 429,
-as MAST does) or is too busy (error 503 or 504), so try a lower
-`--max-parallel-requests`. If most of the download is data between rows and it
-is slow, try a smaller `--max-request-kb`; if you are making lots of small
-requests to a distant server, try a larger one.
+AWS S3. On a slow connection to CASDA, try `--max-request-kb 64` to download
+only the cutout rows. If you see a lot of retries, the server is either limiting
+how fast you can ask (error 429, as MAST does) or is too busy (error 503 or
+504), so try a lower `--max-parallel-requests`. If most of the download is data
+between rows and it is slow, try a smaller `--max-request-kb`; if you are making
+lots of small requests to a distant server, try a larger one.

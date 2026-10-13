@@ -868,7 +868,9 @@ def get_file_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
     return cutout_parser
 
 
-def get_cutout_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
+def get_cutout_parser(
+    parent_parser: bool = False, max_request_kb: int = 64
+) -> argparse.ArgumentParser:
     cutout_parser = argparse.ArgumentParser(
         description="Make a cutout of a FITS file", add_help=not parent_parser
     )
@@ -892,9 +894,9 @@ def get_cutout_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
     download.add_argument(
         "--max-request-kb",
         type=int,
-        default=None,
+        default=max_request_kb,
         help="Largest single request in kB. Rows less than a quarter of this apart "
-        "are downloaded together (default 64)",
+        "are downloaded together (default %(default)s)",
     )
     download.add_argument(
         "--max-parallel-requests",

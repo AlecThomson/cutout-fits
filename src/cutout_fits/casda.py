@@ -131,6 +131,7 @@ async def cutout_from_casda(
     freq_end_hz: float | None = None,
     dry_run: bool = False,
     disable_progress: bool = False,
+    max_request_kb: int = 256,
     **fetch_kwargs: int,
 ) -> fits.HDUList:
     """Stage a file on CASDA and make a cutout.
@@ -146,6 +147,8 @@ async def cutout_from_casda(
         freq_end_hz (float | None, optional): Stopping frequency in Hz. Defaults to None.
         dry_run (bool, optional): Log the download plan without downloading. Defaults to False.
         disable_progress (bool, optional): Hide progress bars. Defaults to False.
+        max_request_kb (int, optional): Largest single request in kB - larger than
+            `make_cutout` as joining rows was faster on CASDA. Defaults to 256.
         **fetch_kwargs (int): Download settings passed to `fetch_section`.
 
     Returns:
@@ -166,6 +169,7 @@ async def cutout_from_casda(
         overwrite=True,
         dry_run=dry_run,
         disable_progress=disable_progress,
+        max_request_kb=max_request_kb,
         **fetch_kwargs,
     )
 
@@ -183,6 +187,7 @@ async def get_cutouts_from_casda(
     reenter_password: bool = False,
     dry_run: bool = False,
     disable_progress: bool = False,
+    max_request_kb: int = 256,
     **fetch_kwargs: int,
 ) -> list[fits.HDUList]:
     """Get cutouts from CASDA.
@@ -200,6 +205,8 @@ async def get_cutouts_from_casda(
         reenter_password (bool, optional): Force CASDA password prompt. Defaults to False.
         dry_run (bool, optional): Log the download plan without downloading. Defaults to False.
         disable_progress (bool, optional): Hide progress bars. Defaults to False.
+        max_request_kb (int, optional): Largest single request in kB - larger than
+            `make_cutout` as joining rows was faster on CASDA. Defaults to 256.
         **fetch_kwargs (int): Download settings passed to `fetch_section`.
 
     Returns:
@@ -227,6 +234,7 @@ async def get_cutouts_from_casda(
             freq_end_hz=freq_end_hz,
             dry_run=dry_run,
             disable_progress=disable_progress,
+            max_request_kb=max_request_kb,
             **fetch_kwargs,
         )
         tasks.append(task)
@@ -269,7 +277,7 @@ def get_casda_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
 
 def main() -> None:
     """CLI"""
-    cutout_parser = get_cutout_parser(parent_parser=True)
+    cutout_parser = get_cutout_parser(parent_parser=True, max_request_kb=256)
     casda_parser = get_casda_parser(parent_parser=True)
     parser = argparse.ArgumentParser(
         description=casda_parser.description,
