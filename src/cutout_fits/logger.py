@@ -63,6 +63,11 @@ def set_verbosity(verbosity: int) -> None:
     ch.setLevel(level)
     logging.getLogger().addHandler(ch)
 
+    # The package logger has its own handler - stop messages printing twice
+    logger.propagate = False
+    for handler in logger.handlers:
+        handler.setLevel(level)
+
 
 logger = logging.getLogger("cutout_fits")
 

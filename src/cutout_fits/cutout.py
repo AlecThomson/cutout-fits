@@ -3,8 +3,8 @@ from __future__ import annotations
 
 import argparse
 import os
-from time import time
-from typing import NamedTuple
+from time import sleep, time
+from typing import Any, NamedTuple
 
 import fsspec.core
 import numpy as np
@@ -15,8 +15,11 @@ from astropy.table import Table
 from astropy.wcs import WCS
 from astropy.wcs.utils import skycoord_to_pixel
 from dotenv import load_dotenv
+from fsspec.asyn import _run_coros_in_chunks, sync
+from fsspec.callbacks import Callback
 from fsspec.spec import AbstractFileSystem
 from fsspec.utils import merge_offset_ranges
+from tqdm import tqdm
 
 from cutout_fits.logger import logger, set_verbosity
 
@@ -362,15 +365,207 @@ def cutout_beamtable(
     return cut_hdu
 
 
+class DownloadPlan(NamedTuple):
+    """Byte ranges to request for a cutout"""
+
+    row_starts: np.ndarray
+    """File offset of each cutout row"""
+    row_bytes: int
+    """Bytes in each cutout row"""
+    row_spacing_bytes: int
+    """Unwanted bytes between neighbouring rows of a channel"""
+    max_request_bytes: int
+    """Largest single request"""
+    max_parallel_requests: int
+    """Requests sent at once"""
+    request_starts: list[int]
+    """File offset where each request starts"""
+    request_ends: list[int]
+    """File offset where each request ends"""
+
+    @property
+    def join_limit_bytes(self) -> int:
+        """Rows closer than this in the file are downloaded in one request"""
+        # A quarter of a request - matches the measured 16 kB for 64 kB requests
+        return self.max_request_bytes // 4
+
+    @property
+    def n_rows(self) -> int:
+        """Number of cutout rows"""
+        return len(self.row_starts)
+
+    @property
+    def n_requests(self) -> int:
+        """Number of requests to the server"""
+        return len(self.request_starts)
+
+    @property
+    def wanted_bytes(self) -> int:
+        """Bytes in the cutout"""
+        return self.n_rows * self.row_bytes
+
+    @property
+    def requested_bytes(self) -> int:
+        """Bytes to download, including unwanted pixels between joined rows"""
+        return sum(self.request_ends) - sum(self.request_starts)
+
+    @property
+    def unwanted_bytes(self) -> int:
+        """Bytes downloaded that are not in the cutout"""
+        return self.requested_bytes - self.wanted_bytes
+
+    def describe(self) -> list[str]:
+        """Plain-language summary of the plan, one line per item"""
+        kb, mb = 1024, 1024**2
+        rows = (
+            f"Cutout is {self.n_rows} rows of {self.row_bytes / kb:.1f} kB, "
+            f"{self.row_spacing_bytes / kb:.1f} kB apart in the file"
+        )
+        join = (
+            f"Rows less than {self.max_request_bytes / kb:.3g}/4="
+            f"{self.join_limit_bytes / kb:.3g} kB apart are downloaded together"
+        )
+        requests = (
+            f"Plan: {self.n_requests} requests, {self.max_parallel_requests} at a time; "
+            f"{self.requested_bytes / mb:.1f} MB to download "
+            f"({self.wanted_bytes / mb:.1f} MB cutout + "
+            f"{self.unwanted_bytes / mb:.1f} MB between rows)"
+        )
+        return [rows, join, requests]
+
+
+def section_fallback_reason(hdu: fits.PrimaryHDU | fits.ImageHDU) -> str | None:
+    """Why ``fetch_section`` must fall back to ``hdu.section``, if it must
+
+    Args:
+        hdu (fits.PrimaryHDU | fits.ImageHDU): Image HDU
+
+    Returns:
+        str | None: Reason, or None if byte ranges can be requested directly
+    """
+    fileinfo = hdu.fileinfo()
+    header = hdu.header
+    if fileinfo is None:
+        return "HDU is not backed by a file"
+    if fileinfo["file"].compression is not None or isinstance(hdu, fits.CompImageHDU):
+        return "compressed file"
+    if header.get("BSCALE", 1) != 1 or header.get("BZERO", 0) != 0:
+        return "scaled data (BSCALE/BZERO)"
+    if len(hdu.shape) < 2:
+        return "1D data"
+    return None
+
+
+def plan_download(
+    hdu: fits.PrimaryHDU | fits.ImageHDU,
+    slicer: tuple[slice, ...],
+    max_request_kb: int = 64,
+    max_parallel_requests: int = 64,
+) -> DownloadPlan:
+    """Work out which byte ranges to request for a cutout
+
+    Args:
+        hdu (fits.PrimaryHDU | fits.ImageHDU): Image HDU opened from a file
+        slicer (tuple[slice, ...]): Slicer for the cutout - in numpy order
+        max_request_kb (int, optional): Largest single request in kB (1024 bytes). Defaults to 64.
+        max_parallel_requests (int, optional): Requests sent at once. Defaults to 64.
+
+    Returns:
+        DownloadPlan: Requests to make
+    """
+    shape = hdu.shape
+    itemsize = hdu.section.dtype.itemsize
+    *outer, inner = (
+        slice(*s.indices(n)[:2]) for s, n in zip(slicer, shape, strict=True)
+    )
+    out_shape = (*(s.stop - s.start for s in outer), inner.stop - inner.start)
+    row_len = out_shape[-1]
+
+    # Byte range of each row in the file
+    grid = np.indices(out_shape[:-1]).reshape(len(outer), -1)
+    grid += np.array([s.start for s in outer])[:, None]
+    rows = np.ravel_multi_index(tuple(grid), shape[:-1])
+    row_starts = hdu.fileinfo()["datLoc"] + (rows * shape[-1] + inner.start) * itemsize
+    row_bytes = row_len * itemsize
+
+    plan = DownloadPlan(
+        row_starts=row_starts,
+        row_bytes=row_bytes,
+        row_spacing_bytes=(shape[-1] - row_len) * itemsize,
+        max_request_bytes=max_request_kb * 1024,
+        max_parallel_requests=max_parallel_requests,
+        request_starts=[],
+        request_ends=[],
+    )
+    _, request_starts, request_ends = merge_offset_ranges(
+        [""] * len(row_starts),
+        row_starts.tolist(),
+        (row_starts + row_bytes).tolist(),
+        max_gap=plan.join_limit_bytes,
+        max_block=plan.max_request_bytes,
+        sort=False,
+    )
+    return plan._replace(request_starts=request_starts, request_ends=request_ends)
+
+
+def cat_ranges_with_progress(
+    fs: AbstractFileSystem,
+    path: str,
+    starts: list[int],
+    ends: list[int],
+    max_parallel_requests: int,
+    desc: str,
+    disable_progress: bool = False,
+) -> list[Any]:
+    """Download byte ranges, showing a progress bar
+
+    Args:
+        fs (AbstractFileSystem): Filesystem holding ``path``
+        path (str): Path to the file on ``fs``
+        starts (list[int]): Start of each range
+        ends (list[int]): End of each range
+        max_parallel_requests (int): Requests sent at once
+        desc (str): Progress bar label
+        disable_progress (bool, optional): Hide the progress bar. Defaults to False.
+
+    Returns:
+        list[Any]: Bytes of each range, or the error it raised
+    """
+    # disable=None hides the bar when not writing to a terminal (e.g. batch jobs)
+    with tqdm(
+        total=len(starts), desc=desc, unit=" requests", disable=disable_progress or None
+    ) as bar:
+        if fs.async_impl:
+            # cat_ranges can't report progress, so run its coroutines here instead
+            callback = Callback(hooks={"tqdm": lambda *_, **__: bar.update()})
+            coros = [
+                fs._cat_file(path, start=start, end=end)
+                for start, end in zip(starts, ends, strict=True)
+            ]
+            out = sync(
+                fs.loop,
+                _run_coros_in_chunks,
+                coros,
+                batch_size=max_parallel_requests,
+                callback=callback,
+                return_exceptions=True,
+                nofiles=True,
+            )
+        else:
+            out = fs.cat_ranges([path] * len(starts), starts, ends, on_error="return")
+        bar.update(len(starts) - bar.n)
+    return list(out)
+
+
 def fetch_section(
     hdu: fits.PrimaryHDU | fits.ImageHDU,
     slicer: tuple[slice, ...],
     fs: AbstractFileSystem,
     path: str,
-    join_within_bytes: int = 128 * 1024,
-    max_request_bytes: int = 16 * 1024**2,
+    max_request_kb: int = 64,
     max_parallel_requests: int = 64,
-    retries: int = 2,
+    retries: int = 4,
+    disable_progress: bool = False,
 ) -> np.ndarray:
     """Get a cutout, requesting all rows from the server at once
 
@@ -382,90 +577,99 @@ def fetch_section(
         slicer (tuple[slice, ...]): Slicer for the cutout - in numpy order
         fs (AbstractFileSystem): Filesystem holding ``path``
         path (str): Path to the FITS file on ``fs``
-        join_within_bytes (int, optional): Download two rows in one request (including the pixels between them) if they are fewer than this many bytes apart in the file. Defaults to 128 KiB.
-        max_request_bytes (int, optional): Maximum bytes per request. Defaults to 16 MiB.
+        max_request_kb (int, optional): Largest single request in kB (1024 bytes). Defaults to 64.
         max_parallel_requests (int, optional): Requests sent at once. Defaults to 64.
-        retries (int, optional): Retries for failed requests. Defaults to 2.
+        retries (int, optional): Retries for failed requests, each after a longer wait (1, 2, 4, ... s) with half as many requests at once. Defaults to 4.
+        disable_progress (bool, optional): Hide the progress bar. Defaults to False.
 
     Returns:
         np.ndarray: Cutout data
     """
-    fileinfo = hdu.fileinfo()
-    header = hdu.header
-    if (
-        fileinfo is None
-        or fileinfo["file"].compression is not None
-        or isinstance(hdu, fits.CompImageHDU)
-        or header.get("BSCALE", 1) != 1
-        or header.get("BZERO", 0) != 0
-        or len(hdu.shape) < 2
-    ):
-        logger.debug("Falling back to astropy section")
+    reason = section_fallback_reason(hdu)
+    if reason is not None:
+        logger.info("Reading one row at a time with astropy section: %s", reason)
         section: np.ndarray = hdu.section[slicer]
         return section
 
-    shape = hdu.shape
-    dtype = hdu.section.dtype.newbyteorder(">")
-    itemsize = dtype.itemsize
-    *outer, inner = (
-        slice(*s.indices(n)[:2]) for s, n in zip(slicer, shape, strict=True)
-    )
-    out_shape = (*(s.stop - s.start for s in outer), inner.stop - inner.start)
-    row_len = out_shape[-1]
+    plan = plan_download(hdu, slicer, max_request_kb, max_parallel_requests)
+    for line in plan.describe():
+        logger.info(line)
 
-    # Byte range of each row in the file
-    grid = np.indices(out_shape[:-1]).reshape(len(outer), -1)
-    grid += np.array([s.start for s in outer])[:, None]
-    rows = np.ravel_multi_index(tuple(grid), shape[:-1])
-    starts = fileinfo["datLoc"] + (rows * shape[-1] + inner.start) * itemsize
-    ends = starts + row_len * itemsize
-
-    n_rows = len(starts)
-    _, block_starts, block_ends = merge_offset_ranges(
-        [path] * n_rows,
-        starts.tolist(),
-        ends.tolist(),
-        max_gap=join_within_bytes,
-        max_block=max_request_bytes,
-        sort=False,
+    tick = time()
+    starts, ends = plan.request_starts, plan.request_ends
+    blocks = cat_ranges_with_progress(
+        fs,
+        path,
+        starts,
+        ends,
+        max_parallel_requests,
+        f"Downloading {hdu.name}",
+        disable_progress,
     )
-    n_blocks = len(block_starts)
-    logger.info("Fetching %d rows in %d requests", n_rows, n_blocks)
-    kwargs = {"batch_size": max_parallel_requests} if fs.async_impl else {}
-    blocks = list(
-        fs.cat_ranges(
-            [path] * n_blocks, block_starts, block_ends, on_error="return", **kwargs
-        )
-    )
-    for _ in range(retries):
+    n_retried = 0
+    parallel = max_parallel_requests
+    for attempt in range(retries):
         failed = [i for i, b in enumerate(blocks) if isinstance(b, Exception)]
         if not failed:
             break
-        logger.warning("Retrying %d of %d failed requests", len(failed), n_blocks)
-        retried = fs.cat_ranges(
-            [path] * len(failed),
-            [block_starts[i] for i in failed],
-            [block_ends[i] for i in failed],
-            on_error="return",
-            **kwargs,
+        n_retried += len(failed)
+        # Busy (504) or rate-limiting (429) servers need a pause and fewer requests
+        parallel = max(parallel // 2, 1)
+        error = blocks[failed[0]]
+        logger.warning(
+            "Retrying %d of %d failed requests in %d s, %d at a time (first error: %s %s)",
+            len(failed),
+            len(starts),
+            2**attempt,
+            parallel,
+            type(error).__name__,
+            getattr(error, "status", ""),
+        )
+        sleep(2**attempt)
+        retried = cat_ranges_with_progress(
+            fs,
+            path,
+            [starts[i] for i in failed],
+            [ends[i] for i in failed],
+            parallel,
+            f"Retrying {hdu.name}",
+            disable_progress,
         )
         for i, block in zip(failed, retried, strict=True):
             blocks[i] = block
-    for block, start, end in zip(blocks, block_starts, block_ends, strict=True):
+    for block, start, end in zip(blocks, starts, ends, strict=True):
         if isinstance(block, Exception):
             raise block
         # Some servers ignore the range and send the whole file
         if len(block) != end - start:
             msg = f"Expected {end - start} bytes from {path}, got {len(block)}"
             raise OSError(msg)
+    took = time() - tick
+    logger.info(
+        "Downloaded %.1f MB in %.1f s (%.1f MB/s), %d retried",
+        plan.requested_bytes / 1024**2,
+        took,
+        plan.requested_bytes / 1024**2 / took,
+        n_retried,
+    )
 
     # Pick each row out of the downloaded blocks
-    block_starts_arr = np.array(block_starts)
+    dtype = hdu.section.dtype.newbyteorder(">")
+    starts_arr = np.array(starts)
     block_offsets = np.cumsum([0, *(len(b) for b in blocks[:-1])])
-    owner = np.searchsorted(block_starts_arr, starts, side="right") - 1
-    row_offsets = (block_offsets[owner] + starts - block_starts_arr[owner]) // itemsize
+    owner = np.searchsorted(starts_arr, plan.row_starts, side="right") - 1
+    row_offsets = (
+        block_offsets[owner] + plan.row_starts - starts_arr[owner]
+    ) // dtype.itemsize
     flat = np.frombuffer(b"".join(blocks), dtype=dtype)
+    row_len = plan.row_bytes // dtype.itemsize
     data: np.ndarray = flat[row_offsets[:, None] + np.arange(row_len)]
+    out_shape = tuple(
+        stop - start
+        for start, stop, _ in (
+            s.indices(n) for s, n in zip(slicer, hdu.shape, strict=True)
+        )
+    )
     return data.reshape(out_shape).astype(dtype.newbyteorder("="))
 
 
@@ -478,6 +682,8 @@ def make_cutout(
     freq_start_hz: float | None = None,
     freq_end_hz: float | None = None,
     overwrite: bool = False,
+    dry_run: bool = False,
+    disable_progress: bool = False,
     **fetch_kwargs: int,
 ) -> fits.HDUList:
     """Make a cutout of a FITS file
@@ -491,24 +697,34 @@ def make_cutout(
         freq_start_hz (float | None, optional): Start frequency in Hz. Defaults to None.
         freq_end_hz (float | None, optional): End frequency in Hz. Defaults to None.
         overwrite (bool): Whether to overwrite the output file.
+        dry_run (bool, optional): Log the download plan without downloading or writing. Defaults to False.
+        disable_progress (bool, optional): Hide progress bars. Defaults to False.
         **fetch_kwargs (int): Download settings passed to `fetch_section`.
 
     Returns:
         fits.HDUList: Cutout HDUList
     """
-    fsspec_kwargs = {}
+    fsspec_kwargs: dict[str, Any] = {}
     if infile.startswith("s3://"):
         logger.info("Attempting to access S3 file...")
-        logger.info("Using S3 credentials...")
-        fsspec_kwargs["key"] = os.getenv("FSSPEC_S3_KEY")
-        fsspec_kwargs["secret"] = os.getenv("FSSPEC_S3_SECRET")
-        fsspec_kwargs["endpoint_url"] = os.getenv("FSSPEC_S3_ENDPOINT_URL")
+        key = os.getenv("FSSPEC_S3_KEY")
+        if key is None:
+            logger.info("No S3 credentials - accessing anonymously")
+            fsspec_kwargs["anon"] = True
+        else:
+            logger.info("Using S3 credentials...")
+            fsspec_kwargs["key"] = key
+            fsspec_kwargs["secret"] = os.getenv("FSSPEC_S3_SECRET")
+        if endpoint_url := os.getenv("FSSPEC_S3_ENDPOINT_URL"):
+            fsspec_kwargs["endpoint_url"] = endpoint_url
+        # botocore allows only 10 connections by default
+        fsspec_kwargs["config_kwargs"] = {"max_pool_connections": 256}
 
     fs, path = fsspec.core.url_to_fs(infile, **fsspec_kwargs)
     cutout_hdulist = fits.HDUList()
     with (
         # Mostly reads headers - fsspec's default 5 MB block is overkill
-        fs.open(path, "rb", block_size=1024**2) as fobj,
+        fs.open(path, "rb", block_size=256 * 1024) as fobj,
         fits.open(fobj, output_verify="silentfix") as hdul,
     ):
         # First check if beams tables are reported
@@ -577,6 +793,7 @@ def make_cutout(
                 continue
 
             # If a primary HDU or image HDU, make a cutout
+            logger.info("Cutting HDU %d (%s)", ext, hdu.name)
             header = hdu.header
             wcs = WCS(header)
             slicer = make_slicer(
@@ -596,9 +813,27 @@ def make_cutout(
             cutout_shape_str = format_shape(wcs, cutout_shape)
             logger.info("Cutout shape: %s", cutout_shape_str)
 
+            if dry_run:
+                reason = section_fallback_reason(hdu)
+                if reason is not None:
+                    logger.info(
+                        "Would read one row at a time with astropy section: %s", reason
+                    )
+                    continue
+                plan_kwargs = {
+                    k: v
+                    for k, v in fetch_kwargs.items()
+                    if k in ("max_request_kb", "max_parallel_requests")
+                }
+                for line in plan_download(hdu, slicer, **plan_kwargs).describe():
+                    logger.info(line)
+                continue
+
             # Download will start here
             tick = time()
-            cutout_data = fetch_section(hdu, slicer, fs, path, **fetch_kwargs)
+            cutout_data = fetch_section(
+                hdu, slicer, fs, path, disable_progress=disable_progress, **fetch_kwargs
+            )
             tock = time()
             logger.info("Cutout obtained! Took %.2f seconds", tock - tick)
             # Make sure the header is updated to reflect the cutout
@@ -606,6 +841,8 @@ def make_cutout(
             cutout_header = update_header(header, slicer)
             cutout_hdulist.append(type(hdu)(cutout_data, cutout_header))
 
+        if dry_run:
+            return cutout_hdulist
         logger.info("Writing cutout to %s", outfile)
         cutout_hdulist.writeto(outfile, overwrite=overwrite)
 
@@ -651,18 +888,35 @@ def get_cutout_parser(parent_parser: bool = False) -> argparse.ArgumentParser:
         help="End frequency in Hz",
         default=None,
     )
-    download = cutout_parser.add_argument_group("Download options (see README)")
+    download = cutout_parser.add_argument_group("Download options")
     download.add_argument(
-        "--join-within-bytes",
+        "--max-request-kb",
         type=int,
         default=None,
-        help="Download two rows in one request if fewer than this many bytes apart",
+        help="Largest single request in kB. Rows less than a quarter of this apart "
+        "are downloaded together (default 64)",
     )
     download.add_argument(
         "--max-parallel-requests",
         type=int,
         default=None,
-        help="Requests sent to the server at once",
+        help="Requests sent to the server at once (default 64)",
+    )
+    download.add_argument(
+        "-n",
+        "--dry-run",
+        action="store_true",
+        help="Print the download plan without downloading",
+    )
+    download.add_argument(
+        "--disable-progress",
+        action="store_true",
+        help="Hide progress bars",
+    )
+    download.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Hide logged output and progress bars",
     )
     return cutout_parser
 
@@ -676,8 +930,22 @@ def get_fetch_kwargs(args: argparse.Namespace) -> dict[str, int]:
     Returns:
         dict[str, int]: Options to pass to `fetch_section`
     """
-    names = ("join_within_bytes", "max_parallel_requests")
+    names = ("max_request_kb", "max_parallel_requests")
     return {n: getattr(args, n) for n in names if getattr(args, n) is not None}
+
+
+def get_verbosity(args: argparse.Namespace) -> int:
+    """Verbosity from the command line, allowing for --quiet and --dry-run
+
+    Args:
+        args (argparse.Namespace): Parsed arguments
+
+    Returns:
+        int: Verbosity to pass to `set_verbosity`
+    """
+    if args.quiet:
+        return -1
+    return max(args.verbosity, 1) if args.dry_run else int(args.verbosity)
 
 
 def main() -> None:
@@ -689,9 +957,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    set_verbosity(
-        verbosity=args.verbosity,
-    )
+    set_verbosity(verbosity=get_verbosity(args))
 
     _ = make_cutout(
         infile=args.infile,
@@ -702,6 +968,8 @@ def main() -> None:
         freq_start_hz=args.freq_start,
         freq_end_hz=args.freq_end,
         overwrite=args.overwrite,
+        dry_run=args.dry_run,
+        disable_progress=args.quiet or args.disable_progress,
         **get_fetch_kwargs(args),
     )
 

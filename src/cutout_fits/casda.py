@@ -11,7 +11,12 @@ from astroquery.casda import Casda
 from astroquery.casda.core import CasdaClass
 from astroquery.utils.tap.core import TapPlus
 
-from cutout_fits.cutout import get_cutout_parser, get_fetch_kwargs, make_cutout
+from cutout_fits.cutout import (
+    get_cutout_parser,
+    get_fetch_kwargs,
+    get_verbosity,
+    make_cutout,
+)
 from cutout_fits.logger import logger, set_verbosity
 
 
@@ -124,6 +129,8 @@ async def cutout_from_casda(
     output_dir: Path,
     freq_start_hz: float | None = None,
     freq_end_hz: float | None = None,
+    dry_run: bool = False,
+    disable_progress: bool = False,
     **fetch_kwargs: int,
 ) -> fits.HDUList:
     """Stage a file on CASDA and make a cutout.
@@ -137,6 +144,8 @@ async def cutout_from_casda(
         output_dir (Path): Directory to save FITS cutouts
         freq_start_hz (float | None, optional): Starting frequency in Hz. Defaults to None.
         freq_end_hz (float | None, optional): Stopping frequency in Hz. Defaults to None.
+        dry_run (bool, optional): Log the download plan without downloading. Defaults to False.
+        disable_progress (bool, optional): Hide progress bars. Defaults to False.
         **fetch_kwargs (int): Download settings passed to `fetch_section`.
 
     Returns:
@@ -155,6 +164,8 @@ async def cutout_from_casda(
         freq_start_hz=freq_start_hz,
         freq_end_hz=freq_end_hz,
         overwrite=True,
+        dry_run=dry_run,
+        disable_progress=disable_progress,
         **fetch_kwargs,
     )
 
@@ -170,6 +181,8 @@ async def get_cutouts_from_casda(
     freq_end_hz: float | None = None,
     store_password: bool = False,
     reenter_password: bool = False,
+    dry_run: bool = False,
+    disable_progress: bool = False,
     **fetch_kwargs: int,
 ) -> list[fits.HDUList]:
     """Get cutouts from CASDA.
@@ -185,6 +198,8 @@ async def get_cutouts_from_casda(
         freq_end_hz (float | None, optional): Stopping frequnecy in Hz. Defaults to None.
         store_password (bool, optional): Store CASDA password. Defaults to False.
         reenter_password (bool, optional): Force CASDA password prompt. Defaults to False.
+        dry_run (bool, optional): Log the download plan without downloading. Defaults to False.
+        disable_progress (bool, optional): Hide progress bars. Defaults to False.
         **fetch_kwargs (int): Download settings passed to `fetch_section`.
 
     Returns:
@@ -210,6 +225,8 @@ async def get_cutouts_from_casda(
             output_dir=output_dir,
             freq_start_hz=freq_start_hz,
             freq_end_hz=freq_end_hz,
+            dry_run=dry_run,
+            disable_progress=disable_progress,
             **fetch_kwargs,
         )
         tasks.append(task)
@@ -261,9 +278,7 @@ def main() -> None:
 
     args = parser.parse_args()
 
-    set_verbosity(
-        verbosity=args.verbosity,
-    )
+    set_verbosity(verbosity=get_verbosity(args))
 
     file_names = args.filename
     if isinstance(file_names, str):
@@ -281,6 +296,8 @@ def main() -> None:
             username=args.username,
             store_password=args.store_password,
             reenter_password=args.reenter_password,
+            dry_run=args.dry_run,
+            disable_progress=args.quiet or args.disable_progress,
             **get_fetch_kwargs(args),
         )
     )

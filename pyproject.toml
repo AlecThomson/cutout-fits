@@ -33,9 +33,10 @@ dependencies = [
   "astropy",
   "numpy",
   "python-dotenv",
-  "fsspec",
+  "fsspec>=2023.1.0",
   "s3fs",
   "astroquery>=0.4.8.dev0",
+  "tqdm",
 ]
 
 [project.optional-dependencies]

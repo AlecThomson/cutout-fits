@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 try:
     # Python < 3.9
     import importlib_resources as resources
@@ -374,12 +376,8 @@ SLICERS = [
 
 
 @pytest.mark.parametrize("slicer", SLICERS)
-@pytest.mark.parametrize(
-    ("join_within_bytes", "max_request_bytes"), [(0, 1), (1024**2, 1024**2)]
-)
-def test_fetch_section_matches_section(
-    plain_data_path, slicer, join_within_bytes, max_request_bytes
-):
+@pytest.mark.parametrize("max_request_kb", [1, 1024])
+def test_fetch_section_matches_section(plain_data_path, slicer, max_request_kb):
     fs, path = fsspec.core.url_to_fs(plain_data_path.as_posix())
     with fits.open(plain_data_path) as hdul:
         hdu = hdul[0]
@@ -389,8 +387,7 @@ def test_fetch_section_matches_section(
             slicer,
             fs,
             path,
-            join_within_bytes=join_within_bytes,
-            max_request_bytes=max_request_bytes,
+            max_request_kb=max_request_kb,
         )
     np.testing.assert_array_equal(got, expected)
 
@@ -481,8 +478,7 @@ def test_fetch_section_retries_failed_ranges(plain_data_path):
             slicer,
             fs,
             plain_data_path.as_posix(),
-            join_within_bytes=0,
-            max_request_bytes=1,
+            max_request_kb=1,
         )
     assert FlakyFS.calls == 2
     np.testing.assert_array_equal(got, expected)
@@ -505,7 +501,61 @@ def test_cutout_2d_with_empty_primary(temp_dir_path):
         ra_deg=10,
         dec_deg=-30,
         radius_arcmin=0.5,
-        join_within_bytes=0,
+        max_request_kb=1,
     )
     assert cut_hdul[0].data is None
     assert 0 < cut_hdul[1].data.shape[0] < 100
+
+
+def test_plan_download(plain_data_path):
+    # 128-pixel float32 rows; a 10-pixel cutout leaves 472 unwanted bytes between rows
+    slicer = (slice(None), slice(None), slice(None), slice(10, 20), slice(30, 40))
+    with fits.open(plain_data_path) as hdul:
+        separate = cutout.plan_download(hdul[0], slicer, max_request_kb=1)
+        joined = cutout.plan_download(hdul[0], slicer)
+
+    assert separate.row_spacing_bytes == 472
+    assert separate.n_requests == separate.n_rows
+    assert separate.unwanted_bytes == 0
+    assert "1/4=0.25 kB apart" in separate.describe()[1]
+
+    assert joined.n_requests < joined.n_rows
+    assert joined.wanted_bytes == joined.n_rows * 40
+    assert joined.unwanted_bytes == joined.requested_bytes - joined.wanted_bytes > 0
+    assert all(
+        end - start <= 64 * 1024
+        for start, end in zip(joined.request_starts, joined.request_ends, strict=True)
+    )
+    assert "64/4=16 kB apart" in joined.describe()[1]
+
+
+def test_dry_run(plain_data_path, center_coord, temp_dir_path, caplog):
+    caplog.set_level(logging.INFO, logger="cutout_fits")
+    out_path = temp_dir_path / "dry.fits"
+    cutout.make_cutout(
+        infile=plain_data_path.as_posix(),
+        outfile=out_path.as_posix(),
+        ra_deg=center_coord.ra.deg,
+        dec_deg=center_coord.dec.deg,
+        radius_arcmin=5,
+        dry_run=True,
+    )
+    assert not out_path.exists()
+    assert any(r.getMessage().startswith("Plan: ") for r in caplog.records)
+
+
+@pytest.mark.parametrize("max_request_kb", [1, 1024])
+def test_fetch_section_async_with_progress(plain_data_path, max_request_kb):
+    asyn_wrapper = pytest.importorskip("fsspec.implementations.asyn_wrapper")
+    fs = asyn_wrapper.AsyncFileSystemWrapper(LocalFileSystem())
+    slicer = SLICERS[0]
+    with fits.open(plain_data_path) as hdul:
+        expected = hdul[0].section[slicer]
+        got = cutout.fetch_section(
+            hdul[0],
+            slicer,
+            fs,
+            plain_data_path.as_posix(),
+            max_request_kb=max_request_kb,
+        )
+    np.testing.assert_array_equal(got, expected)
