@@ -63,7 +63,11 @@ simply included in the output file.
 
 ```
 $ cutout-fits -h
-usage: cutout-fits [-h] [-o] [-v] [--freq-start FREQ_START] [--freq-end FREQ_END] infile outfile ra_deg dec_deg radius_arcmin
+usage: cutout-fits [-h] [-o] [-v] [--freq-start FREQ_START] [--freq-end FREQ_END]
+                   [--max-request-kb MAX_REQUEST_KB]
+                   [--max-parallel-requests MAX_PARALLEL_REQUESTS] [-n] [--disable-progress]
+                   [--quiet]
+                   infile outfile ra_deg dec_deg radius_arcmin
 
 Make a cutout of a FITS file
 
@@ -83,6 +87,16 @@ Cutout options:
   --freq-start FREQ_START
                         Start frequency in Hz
   --freq-end FREQ_END   End frequency in Hz
+
+Download options:
+  --max-request-kb MAX_REQUEST_KB
+                        Largest single request in kB. Rows less than a quarter of this apart are
+                        downloaded together (default 64)
+  --max-parallel-requests MAX_PARALLEL_REQUESTS
+                        Requests sent to the server at once (default 64)
+  -n, --dry-run         Print the download plan without downloading
+  --disable-progress    Hide progress bars
+  --quiet               Hide logged output and progress bars
 ```
 
 ### CASDA Access
@@ -94,7 +108,11 @@ are supported
 
 ```
 $ cutout-casda -h
-usage: cutout-casda [-h] [--freq-start FREQ_START] [--freq-end FREQ_END] [--username USERNAME] [--store-password] [--reenter-password] [-v]
+usage: cutout-casda [-h] [--freq-start FREQ_START] [--freq-end FREQ_END]
+                    [--max-request-kb MAX_REQUEST_KB]
+                    [--max-parallel-requests MAX_PARALLEL_REQUESTS] [-n] [--disable-progress]
+                    [--quiet] [--output OUTPUT] [--username USERNAME] [--store-password]
+                    [--reenter-password] [-v]
                     ra_deg dec_deg radius_arcmin filename [filename ...]
 
 Make a cutout of a FITS file on CASDA
@@ -110,8 +128,19 @@ Cutout options:
                         Start frequency in Hz
   --freq-end FREQ_END   End frequency in Hz
 
+Download options:
+  --max-request-kb MAX_REQUEST_KB
+                        Largest single request in kB. Rows less than a quarter of this apart are
+                        downloaded together (default 256)
+  --max-parallel-requests MAX_PARALLEL_REQUESTS
+                        Requests sent to the server at once (default 64)
+  -n, --dry-run         Print the download plan without downloading
+  --disable-progress    Hide progress bars
+  --quiet               Hide logged output and progress bars
+
 CASDA options:
   filename              FITS file name(s)
+  --output OUTPUT       Output directory
   --username USERNAME   CASDA username
   --store-password      Store password in keyring
   --reenter-password    Re-enter password
@@ -154,7 +183,60 @@ FSSPEC_S3_KEY='...'
 FSSPEC_S3_SECRET='...'
 ```
 
+If `FSSPEC_S3_KEY` is not set, S3 files are accessed anonymously, which works
+for public buckets.
+
 This project support using a `.env` file to store these variables, if needed.
 Simply set these variables in a `.env` files in your current working directory
 or set them in your environment if you wish. Be careful not to commit them to
 VCS.
+
+### Download settings
+
+When cutting out a remote file, `cutout-fits` only downloads the parts of the
+file that it needs. FITS images are stored row by row, so each row of your
+cutout sits in a different place in the file. Rather than fetching these rows
+one at a time (as astropy's `section` does), `cutout-fits` asks the server for
+many of them at once.
+
+Each request to a server has some overhead, so if two rows of the cutout are
+close together in the file, it is faster to grab both in one request, along with
+the pixels in between, than to ask for them separately. Rows are joined like
+this if they are less than a quarter of `--max-request-kb` apart (16 kB by
+default, 64 kB for `cutout-casda`). `--max-parallel-requests` sets how many
+requests are sent at once (64 by default).
+
+To see what would be downloaded without downloading anything, use `--dry-run`.
+With `-v`, the same information is printed before each download. For example,
+for the HST image used in the astropy docs:
+
+```
+$ cutout-fits s3://stpubdata/hst/public/j8pu/j8pu0y010/j8pu0y010_drc.fits out.fits 150.42742 2.42132 0.5 -v
+...
+Cutout is 1391 rows of 5.4 kB, 11.1 kB apart in the file
+Rows less than 64/4=16 kB apart are downloaded together
+Plan: 348 requests, 64 at a time; 18.7 MB to download (7.4 MB cutout + 11.3 MB between rows)
+Downloading SCI: 100%|██████████████████████| 348/348 [00:03<00:00, 113.38 requests/s]
+Downloaded 18.7 MB in 3.1 s (6.0 MB/s), 0 retried
+```
+
+Here the rows are 11.1 kB apart, so they are joined into 348 requests, and 11.3
+MB is downloaded on top of the 7.4 MB cutout. For a small cutout of a wide CASDA
+cube the rows are much further apart (51.3 kB). With `cutout-fits` defaults each
+row would be requested on its own, but `cutout-casda` joins them, as this was
+about four times faster in our tests even though it downloads far more data than
+the cutout.
+
+Progress bars are shown by default, and are hidden automatically when output is
+not going to a terminal (e.g. in batch jobs). `--disable-progress` turns them
+off, and `--quiet` turns off both the progress bars and the logging. Failed
+requests are retried up to four times, waiting longer and sending fewer requests
+at once each time.
+
+The defaults should work well in most cases. In our tests they worked well for
+AWS S3. On a slow connection to CASDA, try `--max-request-kb 64` to download
+only the cutout rows. If you see a lot of retries, the server is either limiting
+how fast you can ask (error 429, as MAST does) or is too busy (error 503 or
+504), so try a lower `--max-parallel-requests`. If most of the download is data
+between rows and it is slow, try a smaller `--max-request-kb`; if you are making
+lots of small requests to a distant server, try a larger one.
