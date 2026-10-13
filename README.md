@@ -232,9 +232,10 @@ requests are retried up to four times, waiting longer and sending fewer requests
 at once each time.
 
 The defaults should work well in most cases. In our tests they worked well for
-AWS S3, and `--max-parallel-requests 128` was faster for CASDA. If you see a lot
-of retries, the server is either limiting how fast you can ask (error 429, as
-MAST does) or is too busy (error 503 or 504), so try a lower
+AWS S3. For CASDA on a fast connection, `--max-request-kb 256` was about four
+times faster, even though it downloads far more data than the cutout. If you see
+a lot of retries, the server is either limiting how fast you can ask (error 429,
+as MAST does) or is too busy (error 503 or 504), so try a lower
 `--max-parallel-requests`. If most of the download is data between rows and it
 is slow, try a smaller `--max-request-kb`; if you are making lots of small
 requests to a distant server, try a larger one.
